@@ -29,5 +29,10 @@ contextBridge.exposeInMainWorld('promemo', {
   lockSetup: (a) => ipcRenderer.invoke('lock:setup', a),
   lockChange: (a) => ipcRenderer.invoke('lock:change', a),
   lockRemove: (a) => ipcRenderer.invoke('lock:remove', a),
+  lsGet: () => ipcRenderer.invoke('ls:get'),
+  lsSet: (p) => ipcRenderer.invoke('ls:set', p),
+  lsReset: () => ipcRenderer.invoke('ls:reset'),
+  lsImage: () => ipcRenderer.invoke('ls:image'),
+  lsImageClear: () => ipcRenderer.invoke('ls:image-clear'),
   onMaximized: (cb) => ipcRenderer.on('maximized', (_e, v) => cb(v)),
 });

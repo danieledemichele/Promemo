@@ -13,7 +13,7 @@ Stile ispirato a macOS, dati salvati sul tuo computer, sincronizzazione con Goog
 - **Home**: riepilogo a riquadri (prossimo impegno con conto alla rovescia, oggi, in ritardo, settimana), linea del tempo di oggi con l'indicatore “adesso”, in arrivo e progetti da riprendere.
 - **Palette comandi** (Ctrl+K): cerca eventi e progetti, crea, naviga.
 - **Progetti**: prossimo passo, passi con scadenza, appuntamenti collegati, timeline di tracce.
-- **Agenda**: mese a tutta pagina con i titoli degli impegni nei giorni, colonna del giorno selezionato. **Un clic su un giorno apre il popup animato** con gli impegni del giorno e il modulo completo per un nuovo evento (titolo, tipo, giornata intera, inizio/fine, luogo, promemoria, progetto, calendario di destinazione, note).
+- **Agenda**: viste **Giorno**, **Settimana** (come Notion Calendar: griglia oraria, riga “tutto il giorno”, impegni affiancati quando si sovrappongono, linea rossa dell'ora attuale, numero della settimana) e **Mese**. Trascina su una fascia vuota per creare un evento, trascina un evento per spostarlo (anche su un altro giorno), tira il bordo inferiore per cambiarne la durata. Mini calendario nella barra laterale. **Un clic su un giorno apre il popup animato** con gli impegni del giorno e il modulo completo per un nuovo evento (titolo, tipo, giornata intera, inizio/fine, luogo, promemoria, progetto, calendario di destinazione, note).
 - **Promemoria**: tutto ciò che ha un avviso, con notifiche desktop.
 - **Account collegati**: Google Calendar, Notion, calendari da link.
 
@@ -24,6 +24,18 @@ Promemo può chiedere una password a ogni apertura (*Impostazioni → Password a
 - Dopo 3 tentativi sbagliati l'attesa tra un tentativo e l'altro cresce fino a 60 secondi.
 - Finché Promemo è bloccata non può inviare notifiche né sincronizzare: dopo lo sblocco resta attiva (anche nell'area di notifica) fino all'uscita.
 - I backup esportati in JSON non sono cifrati.
+
+## Impostazioni
+Finestra a sezioni: **Generale**, **Aspetto** (tema e colore principale), **Calendario** (vista predefinita, inizio giornata, fine settimana), **Notifiche**, **Password**, **Schermata di blocco**, **Dati e backup**.
+
+### Schermata di blocco su misura
+Anteprima dal vivo e a schermo intero. Si possono scegliere:
+- sfondo *Aurora* (6 tavolozze o 3 colori a scelta, con movimento lento), *Tinta unita* o *Immagine* (con sfocatura e oscuramento);
+- orologio (sì/no, 4 spessori, dimensione), data;
+- titolo e sottotitolo (es. “Bentornato, Daniele”), icona, suggerimento della password;
+- riquadro *Vetro*, *Pieno* o *Minimale* e colore del testo.
+
+Queste preferenze sono salvate in chiaro in `promemo.lockscreen.json`, perché servono prima dello sblocco.
 
 ## Calendari e colori
 Nella barra laterale, sotto **Calendari**, ogni account mostra i suoi gruppi con un colore:
@@ -57,8 +69,8 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.4.0.AppImage e dist/trama_1.4.0_amd64.deb
-sudo apt install ./dist/trama_1.4.0_amd64.deb
+npm run dist        # dist/Promemo-1.5.0.AppImage e dist/trama_1.5.0_amd64.deb
+sudo apt install ./dist/trama_1.5.0_amd64.deb
 ```
 
 ## Scorciatoie

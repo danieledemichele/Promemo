@@ -345,6 +345,7 @@ function modalNotionColor(accId) {
 
 function renderSidebar() {
   renderSideCals();
+  renderMiniMonth();
   const active = data.projects.filter(p => p.status !== 'archiviato').length;
   const todayCount = itemsOn(new Date()).length;
   const late = remindersList().filter(r => r.when < new Date() && r.kind === 'st').length;
@@ -617,10 +618,113 @@ function projectDetail(p) {
   </div>`;
 }
 
+const isoWeek = (d) => { const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); const n = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - n); const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1)); return Math.ceil(((t - y0) / 86400000 + 1) / 7); };
+const calMode = () => ui.calMode || data.settings.calMode || 'settimana';
+const weekStartOf = (d) => addDays(startOfDay(d), -((d.getDay() + 6) % 7));
+const HOUR_H = 48;
+
+function agendaToolbar(title, sub) {
+  const mode = calMode();
+  return `<div class="agenda-top">
+    <div class="agenda-title"><h1 class="display" style="text-transform:capitalize">${title}</h1>${sub ? `<span class="agenda-sub">${sub}</span>` : ''}</div>
+    <div class="agenda-tools">
+      <div class="segmented filt" title="Mostra">
+        ${[['appuntamento', 'Appuntamenti'], ['evento', 'Eventi'], ['passo', 'Passi']].map(([k, l]) => `<button class="${ui.chips[k] ? 'on' : ''}" data-action="chip" data-k="${k}">${l}</button>`).join('')}
+      </div>
+      <div class="segmented modes">
+        ${[['giorno', 'Giorno'], ['settimana', 'Settimana'], ['mese', 'Mese']].map(([k, l]) => `<button class="${mode === k ? 'on' : ''}" data-action="cal-mode" data-m="${k}">${l}</button>`).join('')}
+      </div>
+      <div class="nav-pill">
+        <button class="icon-btn" data-action="cal-prev" title="Indietro">${icon('i-chev-l')}</button>
+        <button class="btn small" data-action="cal-today">Oggi</button>
+        <button class="icon-btn" data-action="cal-next" title="Avanti">${icon('i-chev-r')}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// disposizione degli impegni sovrapposti in colonne affiancate
+function layoutDay(list) {
+  list.sort((a, b) => a.s - b.s || b.e - a.e);
+  const clusters = []; let cur = [], end = -1;
+  for (const it of list) { if (cur.length && it.s >= end) { clusters.push(cur); cur = []; end = -1; } cur.push(it); end = Math.max(end, it.e); }
+  if (cur.length) clusters.push(cur);
+  for (const c of clusters) {
+    const cols = [];
+    for (const it of c) { let i = cols.findIndex(e => e <= it.s); if (i < 0) { i = cols.length; cols.push(it.e); } else cols[i] = it.e; it.col = i; }
+    for (const it of c) it.n = cols.length;
+  }
+  return list;
+}
+
+function canEdit(it) {
+  if (it.step) return true;
+  if (!it.ev.source) return true;
+  return !isReadOnly(it.ev);
+}
+
+function viewTimeGrid(days) {
+  const now = new Date();
+  const mins = (d) => d.getHours() * 60 + d.getMinutes();
+  const head = days.map(d => `<button class="tg-hd ${sameDay(d, now) ? 'today' : ''} ${d < startOfDay(now) ? 'past' : ''}" data-action="cal-day" data-date="${dayKey(d)}"><span class="tg-dn">${d.toLocaleDateString('it-IT', { weekday: 'short' }).replace('.', '')}</span><span class="tg-num">${d.getDate()}</span></button>`).join('');
+  let hasAll = false;
+  const allRow = days.map(d => {
+    const its = itemsOn(d, ui.chips).filter(it => it.ev && (it.ev.allDay || spanDays(it.ev) > 1));
+    if (its.length) hasAll = true;
+    return `<div class="tg-all-cell" data-date="${dayKey(d)}">${its.map(it => {
+      const st = dayKey(parse(it.ev.start)) === dayKey(d) || (d.getDay() === 1) || days[0] === d;
+      return `<button class="tg-allchip ${parse(it.ev.end || it.ev.start) < now ? 'past' : ''}" style="--gc:${esc(itemColor(it))}" data-action="edit-event" data-id="${it.ev.id}" title="${esc(it.ev.title)}">${st ? esc(it.ev.title) : '&nbsp;'}</button>`;
+    }).join('')}</div>`;
+  }).join('');
+  const cols = days.map(d => {
+    const its = itemsOn(d, ui.chips).filter(it => !(it.ev && (it.ev.allDay || spanDays(it.ev) > 1)));
+    const ds = startOfDay(d);
+    const list = layoutDay(its.map(it => {
+      const s0 = itemStart(it), e0 = it.ev ? itemEnd(it) : new Date(s0.getTime() + 30 * 60000);
+      const s = s0 < ds ? 0 : mins(s0);
+      const e = e0 > addDays(ds, 1) ? 1440 : Math.max(s + 15, mins(e0) || 1440);
+      return { it, s, e };
+    }));
+    const blocks = list.map(({ it, s, e, col, n }) => {
+      const past = itemEnd(it) < now && !(it.step && !it.step.done);
+      const top = s / 60 * HOUR_H, h = Math.max(20, (e - s) / 60 * HOUR_H - 2);
+      const edit = canEdit(it);
+      const id = it.ev ? it.ev.id : it.step.id;
+      return `<div class="tg-ev ${past ? 'past' : ''} ${h < 34 ? 'short' : ''} ${it.step ? 'step' : ''} ${it.step && it.step.done ? 'done' : ''} ${edit ? 'editable' : 'ro'}" style="top:${top}px;height:${h}px;left:calc(${col / n * 100}% + 1px);width:calc(${100 / n}% - 4px);--gc:${esc(itemColor(it))}"
+        data-kind="${it.ev ? 'ev' : 'st'}" data-id="${id}" ${it.step ? `data-pid="${it.project.id}"` : ''} data-date="${dayKey(d)}" data-s="${s}" data-e="${e}">
+        <div class="tg-ev-t">${it.step ? (it.step.done ? '✓ ' : '◯ ') : ''}${esc(itemTitle(it))}</div>
+        <div class="tg-ev-time">${fmtHM(itemStart(it))}${it.ev ? '–' + fmtHM(itemEnd(it)) : ''}${it.ev && it.ev.location ? ' · ' + esc(it.ev.location) : ''}</div>
+        ${edit && it.ev ? '<i class="tg-rs"></i>' : ''}
+      </div>`;
+    }).join('');
+    const nowLine = sameDay(d, now) ? `<div class="tg-now" style="top:${mins(now) / 60 * HOUR_H}px"></div>` : '';
+    return `<div class="tg-col ${sameDay(d, now) ? 'today' : ''} ${(d.getDay() + 6) % 7 > 4 ? 'we' : ''}" data-date="${dayKey(d)}">${blocks}${nowLine}</div>`;
+  }).join('');
+  const showNow = days.some(d => sameDay(d, now));
+  const gutter = [...Array(24)].map((_, h) => `<div class="tg-hour" style="top:${h * HOUR_H}px">${h ? pad(h) + ':00' : ''}</div>`).join('')
+    + (showNow ? `<div class="tg-now-label" style="top:${mins(now) / 60 * HOUR_H}px">${fmtHM(now)}</div>` : '');
+  const tz = (Intl.DateTimeFormat('it-IT', { timeZoneName: 'short' }).formatToParts(now).find(p => p.type === 'timeZoneName') || {}).value || '';
+  return `<div class="tg" style="--n:${days.length}">
+    <div class="tg-head"><div class="tg-tz">${esc(tz)}</div>${head}</div>
+    <div class="tg-allrow ${hasAll ? '' : 'empty'}"><div class="tg-all-label">Tutto il giorno</div>${allRow}</div>
+    <div class="tg-body" id="tg-body"><div class="tg-grid" style="height:${24 * HOUR_H}px"><div class="tg-gutter">${gutter}</div>${cols}</div></div>
+  </div>`;
+}
+
 function viewAgenda() {
   const today = new Date();
   if (!ui.month) ui.month = new Date(today.getFullYear(), today.getMonth(), 1);
   if (!ui.sel) ui.sel = dayKey(today);
+  const mode = calMode();
+  if (mode !== 'mese') {
+    const sel = parse(ui.sel);
+    let days;
+    if (mode === 'giorno') days = [sel];
+    else { const ws = weekStartOf(sel); days = [...Array(7)].map((_, i) => addDays(ws, i)); if (data.settings.hideWeekend) days = days.slice(0, 5); }
+    const a = days[0], b = days[days.length - 1];
+    const title = mode === 'giorno' ? sel.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }) : (a.getMonth() === b.getMonth() ? fmtMonth(a) : `${MESI[a.getMonth()]} – ${MESI[b.getMonth()]} ${b.getFullYear()}`);
+    return `<div class="agenda tgwrap">${agendaToolbar(title, mode === 'settimana' ? `Settimana ${isoWeek(sel)}` : relDay(sel) === 'Oggi' ? 'Oggi' : '')}${viewTimeGrid(days)}</div>`;
+  }
   const m = ui.month;
   const first = new Date(m.getFullYear(), m.getMonth(), 1);
   const offset = (first.getDay() + 6) % 7; // lunedì = 0
@@ -645,22 +749,7 @@ function viewAgenda() {
   return `
   <div class="agenda modern">
     <div class="agenda-main">
-      <div class="agenda-top">
-        <div>
-          <div class="eyebrow">Agenda</div>
-          <h1 class="display" style="text-transform:capitalize">${fmtMonth(m)}</h1>
-        </div>
-        <div class="agenda-tools">
-          <div class="segmented">
-            ${[['appuntamento', 'Appuntamenti'], ['evento', 'Eventi'], ['passo', 'Passi']].map(([k, l]) => `<button class="${ui.chips[k] ? 'on' : ''}" data-action="chip" data-k="${k}">${l}</button>`).join('')}
-          </div>
-          <div class="nav-pill">
-            <button class="icon-btn" data-action="cal-prev" title="Mese precedente">${icon('i-chev-l')}</button>
-            <button class="btn small" data-action="cal-today">Oggi</button>
-            <button class="icon-btn" data-action="cal-next" title="Mese successivo">${icon('i-chev-r')}</button>
-          </div>
-        </div>
-      </div>
+      ${agendaToolbar(fmtMonth(m), '')}
       <div class="cal">
         <div class="cal-grid">
           ${['L', 'M', 'M', 'G', 'V', 'S', 'D'].map(x => `<div class="dow">${x}</div>`).join('')}
@@ -930,9 +1019,10 @@ function render() {
   const scroll = v.querySelector('.detail-pane')?.scrollTop;
   const titles = { home: 'Home', progetti: 'Progetti', agenda: 'Agenda', promemoria: 'Promemoria', account: 'Account collegati' };
   $('#toolbar-title').textContent = ui.search ? 'Ricerca' : titles[ui.view];
-  v.classList.toggle('full', ui.view === 'progetti' && !ui.search);
+  v.classList.toggle('full', (ui.view === 'progetti' || (ui.view === 'agenda' && calMode() !== 'mese')) && !ui.search);
   v.innerHTML = ui.search ? viewSearch() : ui.view === 'home' ? viewHome() : ui.view === 'progetti' ? viewProjects() : ui.view === 'agenda' ? viewAgenda() : ui.view === 'account' ? viewAccounts() : viewReminders();
   renderSyncButton();
+  if (ui.view === 'agenda' && !ui.search && calMode() !== 'mese') initTimeGrid();
   if (scroll) { const dp = v.querySelector('.detail-pane'); if (dp) dp.scrollTop = scroll; }
 }
 
@@ -953,7 +1043,7 @@ function openModal(html, onMount) {
   const f = $('#modal').querySelector('input:not([type=checkbox]),textarea');
   f && setTimeout(() => f.focus(), 30);
 }
-function closeModal() { $('#modal-backdrop').hidden = true; $('#modal').innerHTML = ''; $('#modal').classList.remove('modal-palette'); }
+function closeModal() { $('#modal-backdrop').hidden = true; $('#modal').innerHTML = ''; $('#modal').classList.remove('modal-palette', 'modal-settings'); }
 
 const remSelect = (val, name = 'reminder') =>
   `<select name="${name}">${REMINDERS.map(([v, l]) => `<option value="${v === null ? '' : v}" ${val === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
@@ -1010,8 +1100,8 @@ function calendarSelect(ev) {
 
 function eventFormHTML(ev, preset = {}, compact = false) {
   const isNew = !ev;
-  const s = ev ? parse(ev.start) : defaultStart(preset.date);
-  const e = ev ? parse(ev.end || ev.start) : new Date(s.getTime() + 3600000);
+  const s = ev ? parse(ev.start) : preset.start ? parse(preset.start) : defaultStart(preset.date);
+  const e = ev ? parse(ev.end || ev.start) : preset.end ? parse(preset.end) : new Date(s.getTime() + 3600000);
   const e0 = ev || { title: '', kind: 'appuntamento', projectId: preset.pid || '', allDay: false, location: '', reminder: 15, notes: '' };
   const ro = ev && isReadOnly(ev);
   const dis = ro ? 'disabled' : '';
@@ -1084,16 +1174,16 @@ function closePopover(instant) {
   const pop = $('#popover-layer .day-pop');
   document.querySelectorAll('.day.popping').forEach(x => x.classList.remove('popping'));
   if (!pop) { popState = null; return; }
-  if (popState) document.removeEventListener('mousedown', popState.outside, true);
+  if (popState) { document.removeEventListener('mousedown', popState.outside, true); popState.onClose && popState.onClose(); }
   popState = null;
   if (instant) { pop.remove(); return; }
   pop.classList.add('closing');
   pop.addEventListener('animationend', () => pop.remove(), { once: true });
 }
 
-function openDayPopover(dateKey) {
+function openDayPopover(dateKey, opts = {}) {
   closePopover(true);
-  const cell = document.querySelector(`.day[data-date="${dateKey}"]`);
+  const cell = opts.anchor || document.querySelector(`.day[data-date="${dateKey}"]`);
   if (!cell) return;
   const d = parse(dateKey);
   const its = itemsOn(d, { appuntamento: true, evento: true, passo: true });
@@ -1112,7 +1202,7 @@ function openDayPopover(dateKey) {
       : `<button class="pop-item" data-action="open-project" data-id="${it.project.id}"><i style="background:${esc(localGroup(it.project).color)}"></i><span class="grow">${esc(it.step.text)}</span><span class="tiny">${fmtHM(parse(it.step.due))}</span></button>`).join('')}
 </div>` : ''}
     <div class="pop-label">Nuovo evento</div>
-    ${eventFormHTML(null, { date: dateKey }, true)}
+    ${eventFormHTML(null, { date: dateKey, start: opts.start, end: opts.end }, true)}
     </div>`;
   layer.appendChild(pop);
   bindEventForm(pop);
@@ -1133,18 +1223,160 @@ function openDayPopover(dateKey) {
   pop.style.setProperty('--ay', ay + 'px');
   pop.style.setProperty('--ax', ax + 'px');
   pop.style.transformOrigin = side === 'right' ? `0 ${ay}px` : side === 'left' ? `100% ${ay}px` : `${ax}px 0`;
-  cell.classList.add('popping');
+  if (!opts.anchor) cell.classList.add('popping');
   setTimeout(() => pop.querySelector('input[name=title]').focus(), 120);
 
   const outside = (e) => {
     if (pop.contains(e.target) || e.target.closest('.modal-backdrop')) return;
-    if (e.target.closest('.day')) return; // un altro giorno: lo gestisce il click
+    if (e.target.closest('.day') || e.target.closest('.tg-col')) return; // un altro giorno o fascia: lo gestisce il clic
     closePopover();
   };
-  popState = { outside, date: dateKey };
+  popState = { outside, date: dateKey, onClose: opts.onClose };
   setTimeout(() => document.addEventListener('mousedown', outside, true));
 }
 function closeAll() { closeModal(); closePopover(); }
+
+const addMonths = (d, n) => new Date(d.getFullYear(), d.getMonth() + n, 1);
+function calShift(dir) {
+  const mode = calMode();
+  closePopover(true);
+  if (mode === 'mese') { ui.month = addMonths(ui.month, dir); }
+  else {
+    const d = addDays(parse(ui.sel), mode === 'giorno' ? dir : 7 * dir);
+    ui.sel = dayKey(d); ui.month = new Date(d.getFullYear(), d.getMonth(), 1);
+  }
+  render();
+}
+
+// mini calendario nella barra laterale (come Notion Calendar)
+function renderMiniMonth() {
+  const box = $('#side-mini'); if (!box) return;
+  if (ui.view !== 'agenda') { box.hidden = true; return; }
+  box.hidden = false;
+  const sel = parse(ui.sel || dayKey(new Date()));
+  if (!ui.mini || ui.miniFor !== ui.sel) { ui.mini = new Date(sel.getFullYear(), sel.getMonth(), 1); ui.miniFor = ui.sel; }
+  const m = ui.mini, start = weekStartOf(m), today = new Date();
+  const ws = weekStartOf(sel), mode = calMode();
+  let rows = '';
+  for (let w = 0; w < 6; w++) {
+    const wd = addDays(start, w * 7);
+    rows += `<span class="mm-wk">${isoWeek(wd)}</span>`;
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(wd, i);
+      const inSel = mode === 'settimana' ? (d >= ws && d < addDays(ws, 7)) : mode === 'giorno' ? sameDay(d, sel) : false;
+      const has = itemsOn(d, ui.chips).length > 0;
+      rows += `<button class="mm-d ${d.getMonth() !== m.getMonth() ? 'other' : ''} ${sameDay(d, today) ? 'today' : ''} ${inSel ? 'insel' : ''} ${sameDay(d, sel) ? 'sel' : ''} ${has ? 'has' : ''}" data-action="mini-day" data-date="${dayKey(d)}">${d.getDate()}</button>`;
+    }
+  }
+  box.innerHTML = `<div class="mm-head"><b>${fmtMonth(m)}</b><button class="mm-nav" data-action="mini-prev">${icon('i-chev-l')}</button><button class="mm-nav" data-action="mini-next">${icon('i-chev-r')}</button></div>
+    <div class="mm-grid"><span class="mm-wk"></span>${['L', 'M', 'M', 'G', 'V', 'S', 'D'].map(x => `<span class="mm-dow">${x}</span>`).join('')}${rows}</div>`;
+}
+
+let tgDrag = null;
+function initTimeGrid() {
+  const body = $('#tg-body'); if (!body) return;
+  const startH = data.settings.dayStartHour ?? 7;
+  body.scrollTop = ui.tgScroll ?? Math.max(0, startH * HOUR_H - 10);
+  body.addEventListener('scroll', () => { ui.tgScroll = body.scrollTop; }, { passive: true });
+  const grid = body.querySelector('.tg-grid');
+  const colsEls = [...grid.querySelectorAll('.tg-col')];
+  const snap = (m) => Math.max(0, Math.min(1440, Math.round(m / 15) * 15));
+  const yToMin = (col, y) => (y - col.getBoundingClientRect().top) / HOUR_H * 60;
+  const colAt = (x) => colsEls.find(c => { const r = c.getBoundingClientRect(); return x >= r.left && x < r.right; });
+  const toIso = (dk, m) => { const d = parse(dk); d.setHours(0, m, 0, 0); return iso(d); };
+
+  grid.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    const evEl = e.target.closest('.tg-ev');
+    const col = e.target.closest('.tg-col');
+    if (!col) return;
+    e.preventDefault();
+    closePopover(true);
+    if (evEl) {
+      tgDrag = { type: e.target.closest('.tg-rs') ? 'resize' : 'move', el: evEl, x0: e.clientX, y0: e.clientY, s: +evEl.dataset.s, e: +evEl.dataset.e, col0: colsEls.indexOf(col), moved: false };
+    } else {
+      const m = snap(yToMin(col, e.clientY) - 7);
+      const ghost = document.createElement('div');
+      ghost.className = 'tg-ghost';
+      ghost.style.top = (m / 60 * HOUR_H) + 'px'; ghost.style.height = (HOUR_H / 4) + 'px';
+      col.appendChild(ghost);
+      tgDrag = { type: 'create', col, m0: m, m1: m + 15, ghost, moved: false, y0: e.clientY };
+    }
+  });
+
+  const onMove = (e) => {
+    const d = tgDrag; if (!d) return;
+    if (d.type === 'create') {
+      if (Math.abs(e.clientY - d.y0) > 4) d.moved = true;
+      const m = snap(yToMin(d.col, e.clientY));
+      d.m1 = Math.max(m, d.m0 + 15); const a = Math.min(d.m0, m), b = Math.max(d.m0 + 15, m);
+      d.a = a; d.b = b;
+      d.ghost.style.top = (a / 60 * HOUR_H) + 'px'; d.ghost.style.height = ((b - a) / 60 * HOUR_H) + 'px';
+      d.ghost.textContent = `${pad(Math.floor(a / 60))}:${pad(a % 60)}–${pad(Math.floor(b / 60))}:${pad(b % 60)}`;
+      return;
+    }
+    if (!d.el.classList.contains('editable')) return;
+    const dy = e.clientY - d.y0, dx = e.clientX - d.x0;
+    if (!d.moved && Math.abs(dy) < 4 && Math.abs(dx) < 4) return;
+    d.moved = true; d.el.classList.add('dragging');
+    const dm = Math.round(dy / HOUR_H * 60 / 15) * 15;
+    if (d.type === 'resize') {
+      d.ne = Math.max(d.s + 15, Math.min(1440, d.e + dm)); d.ns = d.s;
+      d.el.style.height = ((d.ne - d.s) / 60 * HOUR_H - 2) + 'px';
+    } else {
+      const dur = d.e - d.s;
+      d.ns = Math.max(0, Math.min(1440 - dur, d.s + dm)); d.ne = d.ns + dur;
+      const c = colAt(e.clientX); const ci = c ? colsEls.indexOf(c) : d.col0;
+      d.dday = d.el.dataset.kind === 'ev' || d.el.dataset.kind === 'st' ? ci - d.col0 : 0;
+      const cw = colsEls[0].getBoundingClientRect().width;
+      d.el.style.transform = `translate(${d.dday * cw}px, ${(d.ns - d.s) / 60 * HOUR_H}px)`;
+    }
+    d.el.querySelector('.tg-ev-time').textContent = `${pad(Math.floor(d.ns / 60))}:${pad(d.ns % 60)}–${pad(Math.floor(d.ne / 60))}:${pad(d.ne % 60)}`;
+  };
+
+  const onUp = () => {
+    const d = tgDrag; if (!d) return;
+    tgDrag = null;
+    if (d.type === 'create') {
+      const a = d.moved ? d.a ?? d.m0 : d.m0, b = d.moved ? d.b ?? d.m0 + 60 : Math.min(1440, d.m0 + 60);
+      if (!d.moved) { d.ghost.style.height = ((b - a) / 60 * HOUR_H) + 'px'; }
+      d.ghost.textContent = `${pad(Math.floor(a / 60))}:${pad(a % 60)}–${pad(Math.floor(b / 60))}:${pad(b % 60)}`;
+      const dk = d.col.dataset.date;
+      openDayPopover(dk, { anchor: d.ghost, start: toIso(dk, a), end: toIso(dk, b), onClose: () => d.ghost.remove() });
+      return;
+    }
+    const el = d.el;
+    if (!d.moved) { // semplice clic: apri
+      if (el.dataset.kind === 'ev') modalEvent(data.events.find(x => x.id === el.dataset.id));
+      else go('progetti', { projectId: el.dataset.pid, projFilter: 'attivi', catFilter: null });
+      return;
+    }
+    const dk = dayKey(addDays(parse(el.dataset.date), d.dday || 0));
+    if (el.dataset.kind === 'ev') {
+      const ev = data.events.find(x => x.id === el.dataset.id);
+      const os = parse(ev.start), oe = parse(ev.end || ev.start);
+      // mantiene la data di inizio originale se l'evento parte prima del giorno mostrato
+      const ns = d.type === 'resize' ? os : (() => { const x = parse(dk); x.setHours(0, d.ns, 0, 0); return x; })();
+      const ne = d.type === 'resize' ? (() => { const x = parse(el.dataset.date); x.setHours(0, d.ne, 0, 0); return x; })() : new Date(ns.getTime() + (oe - os));
+      ev.start = iso(ns); ev.end = iso(ne); delete ev.notifiedAt;
+      const p = proj(ev.projectId); if (p) touch(p);
+      toast(ev.source ? `Spostato · aggiorno ${PROV[accOf(ev).provider]}…` : 'Spostato');
+    } else {
+      const p = proj(el.dataset.pid); const st = p.steps.find(x => x.id === el.dataset.id);
+      const x = parse(dk); x.setHours(0, d.ns, 0, 0); st.due = iso(x); delete st.notifiedAt; touch(p);
+      toast('Scadenza spostata');
+    }
+    save(); render();
+  };
+  if (!initTimeGrid.bound) {
+    initTimeGrid.bound = true;
+    window.addEventListener('mousemove', onMoveProxy);
+    window.addEventListener('mouseup', onUpProxy);
+  }
+  initTimeGrid.onMove = onMove; initTimeGrid.onUp = onUp;
+}
+function onMoveProxy(e) { initTimeGrid.onMove && initTimeGrid.onMove(e); }
+function onUpProxy(e) { initTimeGrid.onUp && initTimeGrid.onUp(e); }
 
 function modalStep(pid, step) {
   const isNew = !step;
@@ -1202,39 +1434,155 @@ function modalCategory(c) {
     });
 }
 
-function modalSettings() {
+const ACCENTS = [['#e5562a', 'Arancio'], ['#e5484d', 'Rosso'], ['#d6336c', 'Lampone'], ['#7048e8', 'Viola'], ['#0a84ff', 'Blu'], ['#1098ad', 'Turchese'], ['#2b8a3e', 'Verde'], ['#495057', 'Grafite']];
+const SET_PANES = [
+  ['generale', 'i-home', 'Generale'], ['aspetto', 'i-palette', 'Aspetto'], ['calendario', 'i-calendar', 'Calendario'],
+  ['notifiche', 'i-bell', 'Notifiche'], ['sicurezza', 'i-lock', 'Password'], ['blocco', 'i-image', 'Schermata di blocco'], ['dati', 'i-archive', 'Dati e backup'],
+];
+const segHTML = (key, opts, val) => `<div class="segmented" data-seg-set="${key}">${opts.map(([k, l]) => `<button type="button" class="${String(val) === String(k) ? 'on' : ''}" data-v="${k}">${l}</button>`).join('')}</div>`;
+const sw = (key, on, attr = 'data-setting') => `<input type="checkbox" class="switch" ${attr}="${key}" ${on ? 'checked' : ''}>`;
+const srow = (title, sub, control) => `<div class="set-row"><div class="set-txt"><div>${title}</div>${sub ? `<small>${sub}</small>` : ''}</div><div class="set-ctl">${control}</div></div>`;
+
+function paneHTML(id, ls) {
   const s = data.settings;
-  openModal(`
-    <h2>Impostazioni</h2>
-    <div class="field" style="margin-bottom:8px"><span>Aspetto</span>
-      <div class="segmented" data-theme-pick>${[['auto', 'Automatico'], ['light', 'Chiaro'], ['dark', 'Scuro']].map(([k, l]) => `<button class="${s.theme === k ? 'on' : ''}" data-v="${k}">${l}</button>`).join('')}</div>
+  if (id === 'generale') return `<h3>Generale</h3>
+    <div class="set-group">
+      ${srow('Il tuo nome', 'Usato nel saluto della Home', `<input class="set-input" data-name-in value="${esc(s.userName || '')}" placeholder="Es. Daniele">`)}
+      ${srow('Calendario per i nuovi eventi', 'Dove salvare ciò che crei', `<select class="set-select" data-def-cal>${calendarSelect(null).replace(/^<select name="calendar">|<\/select>$/g, '')}</select>`)}
     </div>
-    <div class="switch-row"><div>Password all'avvio<small>${lockInfo.configured ? 'Attiva · dati cifrati con AES-256 su questo computer' : 'Non attiva · chiunque usi il PC può aprire Promemo'}</small></div>
-      <div class="row">${lockInfo.configured ? '<button class="btn small" data-action="pw-change">Cambia</button><button class="btn small danger" data-action="pw-remove">Disattiva</button>' : '<button class="btn small" data-action="pw-setup">Attiva</button>'}</div></div>
-    <label class="switch-row"><div>Il tuo nome<small>Per il saluto nella Home</small></div><input class="select-chip name-in" data-name-in value="${esc(s.userName || '')}" placeholder="Es. Daniele"></label>
-    <label class="switch-row"><div>Notifiche desktop<small>Avvisi all'orario dei promemoria</small></div><input type="checkbox" class="switch" data-setting="notifications" ${s.notifications ? 'checked' : ''}></label>
-    <label class="switch-row"><div>Resta attiva nell'area di notifica<small>Chiudendo la finestra Promemo continua a ricordarti gli impegni</small></div><input type="checkbox" class="switch" data-setting="closeToTray" ${s.closeToTray ? 'checked' : ''}></label>
-    <label class="switch-row"><div>Avvia all'accesso<small>Parte in background quando entri nel desktop</small></div><input type="checkbox" class="switch" data-setting="autostart" ${s.autostart ? 'checked' : ''}></label>
-    <div class="switch-row"><div>Calendario per i nuovi eventi<small>Dove salvare di default ciò che crei</small></div>
-      <select class="select-chip" data-def-cal>${calendarSelect(null).replace(/^<select name="calendar">|<\/select>$/g, '')}</select></div>
-    <div class="switch-row"><div>Dati<small>Salvati su questo computer. Account e token restano cifrati in locale.</small></div>
-      <div class="row"><button class="btn small" data-action="export">Esporta</button><button class="btn small" data-action="import">Importa</button><button class="btn small" data-action="folder">Cartella</button></div></div>
-    <div class="modal-actions"><button class="btn left" data-action="test-notif">${icon('i-bell')} Prova notifica</button><button class="btn-primary" data-action="close-modal">Fine</button></div>`, (m) => {
-      m.querySelector('[data-theme-pick]').addEventListener('click', (e) => {
-        const b = e.target.closest('button'); if (!b) return;
-        s.theme = b.dataset.v; applyTheme(); save();
-        m.querySelectorAll('[data-theme-pick] button').forEach(x => x.classList.toggle('on', x === b));
-      });
-      m.querySelector('[data-name-in]').addEventListener('input', (e) => { s.userName = e.target.value; save(); });
-      m.querySelector('[data-def-cal]').addEventListener('change', (e) => { s.defaultCalendar = e.target.value; save(); });
-      m.querySelectorAll('[data-setting]').forEach(inp => inp.addEventListener('change', () => { s[inp.dataset.setting] = inp.checked; save(); }));
+    <div class="set-group">${srow('Scorciatoie', 'Ctrl+K palette · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni', '')}</div>`;
+  if (id === 'aspetto') return `<h3>Aspetto</h3>
+    <div class="set-group">
+      ${srow('Tema', '', segHTML('theme', [['auto', 'Automatico'], ['light', 'Chiaro'], ['dark', 'Scuro']], s.theme))}
+      ${srow('Colore principale', 'Pulsanti, evidenziazioni e oggi', `<div class="acc-sw">${ACCENTS.map(([c, n]) => `<button type="button" title="${n}" data-accent="${c}" class="${(s.accent || '#e5562a') === c ? 'on' : ''}" style="background:${c}"></button>`).join('')}</div>`)}
+    </div>`;
+  if (id === 'calendario') return `<h3>Calendario</h3>
+    <div class="set-group">
+      ${srow('Vista predefinita dell\'agenda', '', segHTML('calMode', [['giorno', 'Giorno'], ['settimana', 'Settimana'], ['mese', 'Mese']], s.calMode || 'settimana'))}
+      ${srow('Inizio della giornata', 'Ora mostrata in alto quando apri la settimana', `<select class="set-select" data-num="dayStartHour">${[...Array(13)].map((_, h) => `<option value="${h}" ${(s.dayStartHour ?? 7) === h ? 'selected' : ''}>${pad(h)}:00</option>`).join('')}</select>`)}
+      ${srow('Mostra il fine settimana', 'Nella vista Settimana', sw('showWeekend', !s.hideWeekend, 'data-inv'))}
+    </div>`;
+  if (id === 'notifiche') return `<h3>Notifiche</h3>
+    <div class="set-group">
+      ${srow('Notifiche desktop', 'Avvisi all\'orario dei promemoria', sw('notifications', s.notifications))}
+      ${srow('Resta attiva nell\'area di notifica', 'Chiudendo la finestra Promemo continua a ricordarti gli impegni', sw('closeToTray', s.closeToTray))}
+      ${srow('Avvia all\'accesso', lockInfo.configured ? 'Con la password attiva si apre la schermata di blocco' : 'Parte in background quando entri nel desktop', sw('autostart', s.autostart))}
+    </div>
+    <div class="set-group">${srow('Prova', 'Invia una notifica di esempio', `<button class="btn small" data-action="test-notif">${icon('i-bell')} Prova notifica</button>`)}</div>`;
+  if (id === 'sicurezza') return `<h3>Password</h3>
+    <div class="set-group">
+      ${srow('Password all\'avvio', lockInfo.configured ? 'Attiva · dati e credenziali cifrati con AES-256 su questo computer' : 'Non attiva · chiunque usi il PC può aprire Promemo', lockInfo.configured ? '<button class="btn small" data-action="pw-change">Cambia</button><button class="btn small danger" data-action="pw-remove">Disattiva</button>' : '<button class="btn-primary small-p" data-action="pw-setup">Attiva</button>')}
+      ${lockInfo.configured ? srow('Suggerimento', lockInfo.hint ? esc(lockInfo.hint) : 'Nessuno', '<button class="btn small" data-action="pw-change">Modifica</button>') : ''}
+    </div>
+    <p class="set-note">Se dimentichi la password puoi entrare con la chiave di recupero mostrata all'attivazione.</p>`;
+  if (id === 'dati') return `<h3>Dati e backup</h3>
+    <div class="set-group">
+      ${srow('Esporta un backup', lockInfo.configured ? 'File JSON non cifrato: conservalo con cura' : 'Tutti i progetti, eventi e impostazioni in un file JSON', '<button class="btn small" data-action="export">Esporta…</button>')}
+      ${srow('Importa un backup', 'Sostituisce i dati attuali (gli account collegati restano)', '<button class="btn small" data-action="import">Importa…</button>')}
+      ${srow('Cartella dei dati', '~/.config/Promemo', '<button class="btn small" data-action="folder">Apri</button>')}
+    </div>`;
+  if (id === 'blocco') {
+    const c = { ...LS_DEF, ...ls };
+    const palettes = Object.entries(LS_PALETTES).map(([k, p]) => { const cs = p.c || c.colors; return `<button type="button" class="pal-tile ${c.palette === k ? 'on' : ''}" data-ls-pal="${k}"><span style="background:${p.base || '#f3f2ef'}"><i style="background:${cs[0]}"></i><i style="background:${cs[1]}"></i><i style="background:${cs[2]}"></i></span>${p.name}</button>`; }).join('');
+    return `<h3>Schermata di blocco</h3>
+    ${lockInfo.configured ? '' : `<div class="set-banner">${icon('i-lock')} La schermata compare all'avvio solo con la password attiva. <button class="link" data-action="pw-setup">Attiva la password</button></div>`}
+    <div class="ls-prev-wrap"><div class="ls-prev" id="ls-prev"></div><button class="btn small ls-full" data-action="ls-preview">${icon('i-eye')} Anteprima a schermo intero</button></div>
+    <div class="set-group">
+      ${srow('Sfondo', '', segHTML('ls.bg', [['aurora', 'Aurora'], ['tinta', 'Tinta unita'], ['immagine', 'Immagine']], c.bg))}
+      ${c.bg === 'aurora' ? `<div class="set-sub"><div class="pal-grid">${palettes}</div>
+        ${c.palette === 'personalizzato' ? `<div class="row" style="gap:10px;margin-top:10px">${c.colors.map((x, i) => `<label class="color-pick"><input type="color" value="${x}" data-ls-color="${i}"><span>Colore ${i + 1}</span></label>`).join('')}</div>` : ''}
+        ${srow('Movimento lento dello sfondo', '', sw('animate', c.animate, 'data-ls-bool'))}</div>` : ''}
+      ${c.bg === 'tinta' ? `<div class="set-sub"><div class="row" style="gap:8px;flex-wrap:wrap">${['#f3f2ef', '#ffffff', '#e7f5ff', '#fff4e6', '#1c1c1e', '#0b0f24', '#1b4332', '#5f3dc4', '#c92a2a'].map(x => `<button type="button" class="dot-sw ${c.solid === x ? 'on' : ''}" data-ls-solid="${x}" style="background:${x}"></button>`).join('')}<label class="color-pick"><input type="color" value="${c.solid}" data-ls-solid-in><span>Altro</span></label></div></div>` : ''}
+      ${c.bg === 'immagine' ? `<div class="set-sub">
+        <div class="row" style="gap:8px">${c.imageData ? `<img class="ls-thumb" src="${c.imageData}" alt="">` : '<span class="muted">Nessuna immagine scelta</span>'}<span class="grow"></span><button class="btn small" data-action="ls-image">Scegli immagine…</button>${c.imageData ? '<button class="btn small danger" data-action="ls-image-clear">Rimuovi</button>' : ''}</div>
+        ${srow('Sfocatura', `${c.blur} px`, `<input type="range" min="0" max="40" value="${c.blur}" data-ls-range="blur">`)}
+        ${srow('Oscuramento', `${c.dim}%`, `<input type="range" min="0" max="80" value="${c.dim}" data-ls-range="dim">`)}
+      </div>` : ''}
+    </div>
+    <div class="set-group">
+      ${srow('Orologio', '', sw('clock', c.clock, 'data-ls-bool'))}
+      ${c.clock ? srow('Stile dell\'orologio', '', segHTML('ls.clockWeight', [['300', 'Sottile'], ['500', 'Normale'], ['700', 'Marcato'], ['800', 'Pesante']], c.clockWeight)) : ''}
+      ${c.clock ? srow('Dimensione', `${c.clockSize} px`, `<input type="range" min="48" max="140" value="${c.clockSize}" data-ls-range="clockSize">`) : ''}
+      ${srow('Data', '', sw('date', c.date, 'data-ls-bool'))}
+    </div>
+    <div class="set-group">
+      ${srow('Titolo', 'Al posto di “Promemo”', `<input class="set-input" data-ls-text="welcome" maxlength="60" value="${esc(c.welcome)}" placeholder="Es. Bentornato, Daniele">`)}
+      ${srow('Sottotitolo', '', `<input class="set-input" data-ls-text="subtitle" maxlength="90" value="${esc(c.subtitle)}" placeholder="Inserisci la password per sbloccare">`)}
+      ${srow('Icona dell\'app', '', sw('icon', c.icon, 'data-ls-bool'))}
+      ${srow('Mostra il suggerimento della password', '', sw('showHint', c.showHint, 'data-ls-bool'))}
+    </div>
+    <div class="set-group">
+      ${srow('Riquadro', '', segHTML('ls.card', [['vetro', 'Vetro'], ['solido', 'Pieno'], ['minimale', 'Minimale']], c.card))}
+      ${srow('Colore del testo', '', segHTML('ls.text', [['auto', 'Automatico'], ['scuro', 'Scuro'], ['chiaro', 'Chiaro']], c.text))}
+    </div>
+    <div class="set-foot"><span class="set-note">Tutto ciò che scrivi qui è visibile prima dello sblocco: evita informazioni riservate.</span><button class="btn small" data-action="ls-reset">Ripristina predefiniti</button></div>`;
+  }
+  return '';
+}
+
+let setPane = 'generale', lsCfg = null;
+async function modalSettings(pane) {
+  if (pane) setPane = pane;
+  lsCfg = await api.lsGet();
+  openModal(`<div class="set-win">
+      <nav class="set-nav">${SET_PANES.map(([k, ic, l]) => `<button class="set-nav-i ${setPane === k ? 'on' : ''}" data-pane="${k}">${icon(ic)}${l}</button>`).join('')}</nav>
+      <div class="set-main"><div class="set-pane" id="set-pane"></div><div class="set-close"><button class="btn-primary" data-action="close-modal">Fine</button></div></div>
+    </div>`, (m) => {
+      m.classList.add('modal-settings');
+      m.querySelector('.set-nav').addEventListener('click', (e) => { const b = e.target.closest('[data-pane]'); if (!b) return; setPane = b.dataset.pane; m.querySelectorAll('.set-nav-i').forEach(x => x.classList.toggle('on', x === b)); drawPane(m); });
+      drawPane(m);
     });
+}
+
+function drawPane(m) {
+  const box = m.querySelector('#set-pane');
+  const keep = box.scrollTop;
+  box.innerHTML = paneHTML(setPane, lsCfg);
+  box.scrollTop = keep;
+  const s = data.settings;
+  const prev = box.querySelector('#ls-prev');
+  if (prev) requestAnimationFrame(() => renderLockPreview(prev, lsCfg));
+  const lsPatch = async (patch, redraw = false) => {
+    Object.assign(lsCfg, patch);
+    if (prev) renderLockPreview(prev, lsCfg);
+    clearTimeout(lsPatch.t);
+    lsPatch.t = setTimeout(async () => { const r = await api.lsSet(Object.fromEntries(Object.entries(lsCfg).filter(([k]) => k !== 'imageData'))); if (r) { lsCfg = r; lockInfo.lockscreen = r; } }, 250);
+    if (redraw) drawPane(m);
+  };
+  box.querySelectorAll('[data-seg-set]').forEach(g => g.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-v]'); if (!b) return;
+    const key = g.dataset.segSet, v = b.dataset.v;
+    g.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    if (key === 'theme') { s.theme = v; applyTheme(); save(); }
+    else if (key === 'calMode') { s.calMode = v; ui.calMode = v; save(); render(); }
+    else if (key.startsWith('ls.')) { const k = key.slice(3); lsPatch({ [k]: k === 'clockWeight' ? +v : v }, k === 'bg' || k === 'clock'); }
+  }));
+  box.querySelectorAll('[data-accent]').forEach(b => b.addEventListener('click', () => { s.accent = b.dataset.accent; applyTheme(); save(); box.querySelectorAll('[data-accent]').forEach(x => x.classList.toggle('on', x === b)); }));
+  box.querySelector('[data-name-in]')?.addEventListener('input', (e) => { s.userName = e.target.value; save(); });
+  box.querySelector('[data-def-cal]')?.addEventListener('change', (e) => { s.defaultCalendar = e.target.value; save(); });
+  box.querySelectorAll('[data-num]').forEach(x => x.addEventListener('change', () => { s[x.dataset.num] = +x.value; ui.tgScroll = null; save(); }));
+  box.querySelectorAll('[data-setting]').forEach(inp => inp.addEventListener('change', () => { s[inp.dataset.setting] = inp.checked; save(); }));
+  box.querySelectorAll('[data-inv]').forEach(inp => inp.addEventListener('change', () => { s.hideWeekend = !inp.checked; save(); render(); }));
+  box.querySelectorAll('[data-ls-pal]').forEach(b => b.addEventListener('click', () => lsPatch({ palette: b.dataset.lsPal }, true)));
+  box.querySelectorAll('[data-ls-color]').forEach(inp => inp.addEventListener('input', () => { const cs = [...lsCfg.colors]; cs[+inp.dataset.lsColor] = inp.value; lsPatch({ colors: cs }); }));
+  box.querySelectorAll('[data-ls-solid]').forEach(b => b.addEventListener('click', () => lsPatch({ solid: b.dataset.lsSolid }, true)));
+  box.querySelector('[data-ls-solid-in]')?.addEventListener('input', (e) => lsPatch({ solid: e.target.value }));
+  box.querySelectorAll('[data-ls-bool]').forEach(inp => inp.addEventListener('change', () => lsPatch({ [inp.dataset.lsBool]: inp.checked }, inp.dataset.lsBool === 'clock')));
+  box.querySelectorAll('[data-ls-range]').forEach(inp => inp.addEventListener('input', () => { lsPatch({ [inp.dataset.lsRange]: +inp.value }); const sm = inp.closest('.set-row').querySelector('small'); if (sm) sm.textContent = inp.value + (inp.dataset.lsRange === 'dim' ? '%' : ' px'); }));
+  box.querySelectorAll('[data-ls-text]').forEach(inp => inp.addEventListener('input', () => lsPatch({ [inp.dataset.lsText]: inp.value })));
 }
 
 function applyTheme() {
   const t = data.settings.theme;
-  if (t === 'auto') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.setAttribute('data-theme', t);
+  const root = document.documentElement;
+  if (t === 'auto') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', t);
+  const a = data.settings.accent;
+  if (a && a !== '#e5562a') {
+    root.style.setProperty('--accent', a);
+    root.style.setProperty('--accent-soft', `color-mix(in srgb, ${a} 14%, transparent)`);
+    root.style.setProperty('--accent-ink', `color-mix(in srgb, ${a} 78%, var(--text))`);
+  } else ['--accent', '--accent-soft', '--accent-ink'].forEach(k => root.style.removeProperty(k));
 }
 
 function showMenu(anchor, items) {
@@ -1324,6 +1672,10 @@ const actions = {
   },
   'close-all': () => closeAll(),
   'pw-change': () => modalNewPassword(false),
+  'ls-preview': async () => { const st = await api.lockState(); closeModal(); showLock({ ...st, lockscreen: lsCfg }, true); },
+  'ls-image': async () => { const r = await api.lsImage(); if (r && r.error) return toast(r.error); if (r) { lsCfg = r; lockInfo.lockscreen = r; const m = $('#modal'); if (m.classList.contains('modal-settings')) drawPane(m); } },
+  'ls-image-clear': async () => { const r = await api.lsImageClear(); if (r) { lsCfg = r; lockInfo.lockscreen = r; drawPane($('#modal')); } },
+  'ls-reset': async () => { const r = await api.lsReset(); if (r) { lsCfg = r; lockInfo.lockscreen = r; drawPane($('#modal')); toast('Schermata ripristinata'); } },
   'pw-remove': () => modalRemovePassword(),
   'pw-setup': () => { closeModal(); showSetup(true); },
   palette: () => openPalette(),
@@ -1333,9 +1685,14 @@ const actions = {
   'notion-color': (el) => modalNotionColor(el.dataset.id),
   'open-url': (el) => api.openUrl(el.dataset.url),
   'sync-now': async () => { const r = await api.syncNow(); if (!r.ok) toast(r.error); },
-  'cal-prev': () => { ui.month = new Date(ui.month.getFullYear(), ui.month.getMonth() - 1, 1); render(); },
-  'cal-next': () => { ui.month = new Date(ui.month.getFullYear(), ui.month.getMonth() + 1, 1); render(); },
-  'cal-today': () => { const t = new Date(); ui.month = new Date(t.getFullYear(), t.getMonth(), 1); ui.sel = dayKey(t); render(); },
+  'cal-prev': () => calShift(-1),
+  'cal-next': () => calShift(1),
+  'cal-today': () => { const t = new Date(); ui.month = new Date(t.getFullYear(), t.getMonth(), 1); ui.sel = dayKey(t); ui.tgScroll = null; render(); },
+  'cal-mode': (el) => { ui.calMode = el.dataset.m; data.settings.calMode = el.dataset.m; save(); const d = parse(ui.sel); ui.month = new Date(d.getFullYear(), d.getMonth(), 1); closePopover(true); render(); },
+  'cal-day': (el) => { ui.sel = el.dataset.date; ui.calMode = 'giorno'; render(); },
+  'mini-day': (el) => { ui.sel = el.dataset.date; const d = parse(ui.sel); ui.month = new Date(d.getFullYear(), d.getMonth(), 1); if (ui.view !== 'agenda') go('agenda'); else render(); },
+  'mini-prev': () => { ui.mini = addMonths(ui.mini, -1); renderMiniMonth(); },
+  'mini-next': () => { ui.mini = addMonths(ui.mini, 1); renderMiniMonth(); },
   chip: (el) => { ui.chips[el.dataset.k] = !ui.chips[el.dataset.k]; render(); },
   'close-modal': () => closeModal(),
   'test-notif': () => api.testNotification(),
@@ -1366,14 +1723,14 @@ const submits = {
     const r = await api.lockChange({ current: fd.get('current') || '', next: fd.get('next'), hint: fd.get('hint') });
     setBusy(f, false);
     if (!r.ok) return showErr(f, r.error);
-    lockInfo = await api.lockState(); closeModal(); toast('Password aggiornata');
+    lockInfo = await api.lockState(); closeModal(); toast('Password aggiornata'); if (setPane === 'sicurezza' && !f.closest('.lock')) modalSettings('sicurezza');
   },
   'pw-remove': async (f, fd) => {
     setBusy(f, true, 'Decifro…');
     const r = await api.lockRemove({ current: fd.get('current') });
     setBusy(f, false);
     if (!r.ok) return showErr(f, r.error);
-    lockInfo = await api.lockState(); closeModal(); toast('Password disattivata');
+    lockInfo = await api.lockState(); closeModal(); toast('Password disattivata'); modalSettings('sicurezza');
   },
   'connect-google': async (f, fd) => {
     showErr(f); setBusy(f, true, 'Completa l’accesso nel browser…');
@@ -1559,7 +1916,7 @@ document.addEventListener('keydown', (e) => {
 });
 $('#modal-backdrop').addEventListener('mousedown', (e) => { if (e.target.id === 'modal-backdrop') closeModal(); });
 $('#btn-new').addEventListener('click', modalNew);
-$('#btn-settings').addEventListener('click', modalSettings);
+$('#btn-settings').addEventListener('click', () => modalSettings());
 $('#btn-sync').addEventListener('click', () => actions['sync-now']());
 $('#global-search').addEventListener('input', (e) => { ui.search = e.target.value.trim(); render(); });
 document.querySelector('.titlebar-drag').addEventListener('dblclick', () => api.maximize());
@@ -1576,17 +1933,81 @@ api.onNavigate((r) => {
 });
 
 // aggiorna "in corso", saluti e scadenze ogni minuto
-setInterval(() => { if (!data) return; const lk = $('#lock'); if (lk && !lk.hidden) return; if ($('#modal-backdrop').hidden && !document.activeElement?.closest('[contenteditable], input, textarea')) render(); }, 60000);
+setInterval(() => { if (!data || tgDrag || popState) return; const lk = $('#lock'); if (lk && !lk.hidden) return; if ($('#modal-backdrop').hidden && !document.activeElement?.closest('[contenteditable], input, textarea')) render(); }, 60000);
 
 // ---------- Schermata di accesso ----------
 let lockInfo = { configured: false };
-const LOCK_BG = `<div class="lock-bg"><i></i><i></i><i></i></div>
-  <div class="lock-drag"><div class="traffic"><button class="tl tl-close" data-lockwin="close" title="Esci"></button><button class="tl tl-min" data-lockwin="minimize"></button><button class="tl tl-max" data-lockwin="maximize"></button></div></div>`;
+const LS_PALETTES = {
+  tramonto: { name: 'Tramonto', c: ['#ff8a4c', '#5ac8fa', '#9775fa'] },
+  oceano: { name: 'Oceano', c: ['#3bc9db', '#4dabf7', '#748ffc'] },
+  bosco: { name: 'Bosco', c: ['#69db7c', '#38d9a9', '#ffd43b'] },
+  lavanda: { name: 'Lavanda', c: ['#da77f2', '#9775fa', '#f783ac'] },
+  sabbia: { name: 'Sabbia', c: ['#ffc078', '#ffa8a8', '#ffe066'] },
+  notte: { name: 'Notte', c: ['#7048e8', '#1c7ed6', '#e64980'], base: '#0b0f24', dark: true },
+  personalizzato: { name: 'Su misura', c: null },
+};
+const LS_DEF = { bg: 'aurora', palette: 'tramonto', colors: ['#ff8a4c', '#5ac8fa', '#9775fa'], solid: '#1c1c1e', blur: 0, dim: 25, animate: true, clock: true, clockWeight: 700, clockSize: 86, date: true, welcome: '', subtitle: '', showHint: true, card: 'vetro', text: 'auto', icon: true };
+const lum = (h) => { const m = String(h).replace('#', '').match(/.{2}/g); if (!m) return 1; const [r, g, b] = m.map(x => parseInt(x, 16) / 255); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 
-function lockClock() {
-  const now = new Date();
-  return `<div class="lock-clock"><div class="lock-date">${now.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}</div><div class="lock-time">${fmtHM(now)}</div></div>`;
+// calcola sfondo, classi e colore del testo della schermata di blocco
+function lockLook(cfg0) {
+  const cfg = { ...LS_DEF, ...(cfg0 || {}) };
+  let bg = '', base = '', dark = false;
+  if (cfg.bg === 'immagine' && cfg.imageData) {
+    const b = +cfg.blur || 0;
+    bg = `<div class="lock-img" style="background-image:url('${cfg.imageData}');filter:blur(${b}px);inset:${-b * 2}px"></div><div class="lock-dim" style="opacity:${(+cfg.dim || 0) / 100}"></div>`;
+    base = '#111'; dark = true;
+  } else if (cfg.bg === 'tinta') {
+    base = cfg.solid; dark = lum(cfg.solid) < 0.55;
+  } else {
+    const p = LS_PALETTES[cfg.palette] || LS_PALETTES.tramonto;
+    const cs = p.c || cfg.colors;
+    base = p.base || ''; dark = !!p.dark;
+    bg = `<div class="lock-bg ${cfg.animate ? '' : 'still'}">${cs.map(c => `<i style="background:${esc(c)}"></i>`).join('')}</div>`;
+  }
+  if (cfg.text === 'chiaro') dark = true; else if (cfg.text === 'scuro') dark = false;
+  const drag = `<div class="lock-drag"><div class="traffic"><button class="tl tl-close" data-lockwin="close" title="Esci"></button><button class="tl tl-min" data-lockwin="minimize"></button><button class="tl tl-max" data-lockwin="maximize"></button></div></div>`;
+  return { cfg, html: bg + drag, cls: `lock ${dark ? 'ls-light' : ''} ls-card-${cfg.card}`, base };
 }
+function applyLook(el, look, extra = '') {
+  el.className = look.cls + ' ' + extra;
+  el.style.background = look.base || '';
+}
+
+function lockClock(cfg = LS_DEF) {
+  const now = new Date();
+  if (!cfg.clock && !cfg.date) return '';
+  return `<div class="lock-clock">${cfg.date ? `<div class="lock-date">${now.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}</div>` : ''}${cfg.clock ? `<div class="lock-time" style="font-weight:${+cfg.clockWeight};font-size:${+cfg.clockSize}px">${fmtHM(now)}</div>` : ''}</div>`;
+}
+
+function lockCardHTML(cfg, mode, hint, preview) {
+  return `<form class="lock-card" id="lock-form" autocomplete="off">
+      ${cfg.icon ? '<img src="../build/icon.png" class="lock-icon" alt="">' : ''}
+      <div class="lock-title">${esc(cfg.welcome || 'Promemo')}</div>
+      <div class="lock-sub">${mode === 'pw' ? esc(cfg.subtitle || 'Inserisci la password per sbloccare') : 'Inserisci la chiave di recupero'}</div>
+      <div class="lock-field">
+        <input id="lock-in" type="${mode === 'pw' ? 'password' : 'text'}" placeholder="${mode === 'pw' ? 'Password' : 'XXXX-XXXX-XXXX-XXXX-XXXX-XXXX'}" spellcheck="false" ${mode === 'rec' ? 'style="text-transform:uppercase;letter-spacing:.06em"' : ''} ${preview === 'mini' ? 'tabindex="-1"' : ''}>
+        ${mode === 'pw' ? `<button type="button" class="lock-eye" id="lock-eye" title="Mostra" tabindex="-1">${icon('i-eye')}</button>` : ''}
+        <button class="lock-go" title="Sblocca" tabindex="-1">${icon('i-arrow-r')}</button>
+      </div>
+      <div class="lock-msg" id="lock-msg">${mode === 'pw' && hint && cfg.showHint ? 'Suggerimento: ' + esc(hint) : ''}</div>
+      ${preview ? '' : `<button type="button" class="lock-link" id="lock-switch">${mode === 'pw' ? 'Password dimenticata? Usa la chiave di recupero' : 'Torna alla password'}</button>`}
+      ${preview === 'full' ? '<button type="button" class="lock-link" id="lock-exit">Esci dall\'anteprima (Esc)</button>' : ''}
+    </form>`;
+}
+
+// anteprima in miniatura per le impostazioni
+function renderLockPreview(box, cfg) {
+  const look = lockLook(cfg);
+  box.innerHTML = `<div class="ls-scale"></div>`;
+  const inner = box.firstChild;
+  inner.className = 'ls-scale ' + look.cls;
+  inner.style.background = look.base || 'var(--bg)';
+  inner.innerHTML = look.html + lockClock(look.cfg) + lockCardHTML(look.cfg, 'pw', lockInfo.hint || '', 'mini');
+  const k = box.clientWidth / 1280;
+  inner.style.transform = `scale(${k})`;
+}
+
 
 function strength(pw) {
   let n = 0;
@@ -1600,31 +2021,25 @@ function bindLockWin(el) {
   el.querySelectorAll('[data-lockwin]').forEach(b => b.addEventListener('click', () => api[b.dataset.lockwin]()));
 }
 
-function showLock(st) {
+function showLock(st, preview = false) {
   const el = $('#lock');
-  el.hidden = false; el.className = 'lock';
+  const look = lockLook(st.lockscreen);
+  el.hidden = false; applyLook(el, look, preview ? 'over-full' : '');
   let mode = 'pw';
+  const closePreview = () => { el.classList.add('leaving'); setTimeout(() => { el.hidden = true; el.innerHTML = ''; el.className = 'lock'; el.style.background = ''; }, 400); document.removeEventListener('keydown', escPrev, true); };
+  const escPrev = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closePreview(); } };
+  if (preview) document.addEventListener('keydown', escPrev, true);
   const draw = () => {
-    el.innerHTML = `${LOCK_BG}${lockClock()}
-    <form class="lock-card" id="lock-form" autocomplete="off">
-      <img src="../build/icon.png" class="lock-icon" alt="">
-      <div class="lock-title">Promemo</div>
-      <div class="lock-sub">${mode === 'pw' ? 'Inserisci la password per sbloccare' : 'Inserisci la chiave di recupero'}</div>
-      <div class="lock-field">
-        <input id="lock-in" type="${mode === 'pw' ? 'password' : 'text'}" placeholder="${mode === 'pw' ? 'Password' : 'XXXX-XXXX-XXXX-XXXX-XXXX-XXXX'}" spellcheck="false" ${mode === 'rec' ? 'style="text-transform:uppercase;letter-spacing:.06em"' : ''}>
-        ${mode === 'pw' ? `<button type="button" class="lock-eye" id="lock-eye" title="Mostra">${icon('i-eye')}</button>` : ''}
-        <button class="lock-go" title="Sblocca">${icon('i-arrow-r')}</button>
-      </div>
-      <div class="lock-msg" id="lock-msg">${mode === 'pw' && st.hint ? 'Suggerimento: ' + esc(st.hint) : ''}</div>
-      <button type="button" class="lock-link" id="lock-switch">${mode === 'pw' ? 'Password dimenticata? Usa la chiave di recupero' : 'Torna alla password'}</button>
-    </form>`;
+    el.innerHTML = look.html + lockClock(look.cfg) + lockCardHTML(look.cfg, mode, st.hint, preview ? 'full' : '');
     bindLockWin(el);
     const inp = el.querySelector('#lock-in');
     setTimeout(() => inp.focus(), 60);
-    el.querySelector('#lock-switch').addEventListener('click', () => { mode = mode === 'pw' ? 'rec' : 'pw'; draw(); });
+    el.querySelector('#lock-switch')?.addEventListener('click', () => { mode = mode === 'pw' ? 'rec' : 'pw'; draw(); });
+    el.querySelector('#lock-exit')?.addEventListener('click', closePreview);
     el.querySelector('#lock-eye')?.addEventListener('click', () => { inp.type = inp.type === 'password' ? 'text' : 'password'; inp.focus(); });
     el.querySelector('#lock-form').addEventListener('submit', async (ev) => {
       ev.preventDefault();
+      if (preview) { closePreview(); return; }
       if (!inp.value) return;
       const card = el.querySelector('.lock-card');
       card.classList.add('busy');
@@ -1653,13 +2068,14 @@ async function enterApp() {
   applyTheme();
   render();
   const el = $('#lock');
-  if (!el.hidden) { el.classList.add('leaving'); setTimeout(() => { el.hidden = true; el.innerHTML = ''; el.className = 'lock'; }, 450); }
+  if (!el.hidden) { el.classList.add('leaving'); setTimeout(() => { el.hidden = true; el.innerHTML = ''; el.className = 'lock'; el.style.background = ''; }, 450); }
 }
 
 function showSetup(fromSettings) {
   const el = $('#lock');
-  el.hidden = false; el.className = 'lock' + (fromSettings ? ' over' : '');
-  el.innerHTML = `${LOCK_BG}
+  const look = lockLook(lockInfo.lockscreen);
+  el.hidden = false; applyLook(el, look, fromSettings ? 'over' : '');
+  el.innerHTML = `${look.html}
     <form class="lock-card wide" id="setup-form" autocomplete="off">
       <img src="../build/icon.png" class="lock-icon" alt="">
       <div class="lock-title">Proteggi Promemo</div>
@@ -1701,7 +2117,7 @@ function showSetup(fromSettings) {
 
 function showRecovery(code) {
   const el = $('#lock');
-  el.innerHTML = `${LOCK_BG}
+  el.innerHTML = `${lockLook(lockInfo.lockscreen).html}
     <div class="lock-card wide">
       <div class="lock-badge">${icon('i-check')}</div>
       <div class="lock-title">Protezione attiva</div>

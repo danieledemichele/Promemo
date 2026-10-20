@@ -348,6 +348,57 @@ ipcMain.handle('data:import', async () => {
 });
 ipcMain.handle('data:folder', () => shell.openPath(dataDir()));
 
+// ---------- Aspetto della schermata di blocco (non riservato: serve prima dello sblocco) ----------
+const lsFile = () => path.join(dataDir(), 'promemo.lockscreen.json');
+const LS_DEFAULT = { bg: 'aurora', palette: 'tramonto', colors: ['#ff8a4c', '#5ac8fa', '#9775fa'], solid: '#1c1c1e', image: '', blur: 0, dim: 25,
+  animate: true, clock: true, clockWeight: 700, clockSize: 86, date: true, welcome: '', subtitle: '', showHint: true, card: 'vetro', text: 'auto', icon: true };
+const LS_KEYS = Object.keys(LS_DEFAULT);
+function readLs() { try { return { ...LS_DEFAULT, ...JSON.parse(fs.readFileSync(lsFile(), 'utf8')) }; } catch { return { ...LS_DEFAULT }; } }
+function lsFull() {
+  const c = readLs();
+  if (c.image) {
+    try {
+      const buf = fs.readFileSync(path.join(dataDir(), c.image));
+      const ext = path.extname(c.image).slice(1).toLowerCase();
+      c.imageData = `data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${buf.toString('base64')}`;
+    } catch { c.image = ''; if (c.bg === 'immagine') c.bg = 'aurora'; }
+  }
+  return c;
+}
+function writeLs(c) {
+  const out = {};
+  for (const k of LS_KEYS) out[k] = c[k] ?? LS_DEFAULT[k];
+  out.welcome = String(out.welcome || '').slice(0, 60); out.subtitle = String(out.subtitle || '').slice(0, 90);
+  out.blur = Math.max(0, Math.min(40, +out.blur || 0)); out.dim = Math.max(0, Math.min(80, +out.dim || 0));
+  out.clockSize = Math.max(48, Math.min(140, +out.clockSize || 86));
+  fs.mkdirSync(dataDir(), { recursive: true });
+  fs.writeFileSync(lsFile(), JSON.stringify(out, null, 2));
+}
+ipcMain.handle('ls:get', () => lsFull());
+ipcMain.handle('ls:set', (_e, patch) => { if (!data) return null; writeLs({ ...readLs(), ...patch }); return lsFull(); });
+ipcMain.handle('ls:reset', () => { if (!data) return null; const c = readLs(); writeLs({ ...LS_DEFAULT, image: c.image }); return lsFull(); });
+ipcMain.handle('ls:image', async () => {
+  if (!data) return null;
+  const { filePaths } = await dialog.showOpenDialog(win, { title: 'Sfondo della schermata di blocco', filters: [{ name: 'Immagini', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'] }], properties: ['openFile'] });
+  if (!filePaths || !filePaths[0]) return null;
+  const st = fs.statSync(filePaths[0]);
+  if (st.size > 15 * 1024 * 1024) return { error: 'Immagine troppo grande (massimo 15 MB).' };
+  const ext = path.extname(filePaths[0]).toLowerCase().replace('.jpeg', '.jpg');
+  const c = readLs();
+  if (c.image) { try { fs.unlinkSync(path.join(dataDir(), c.image)); } catch {} }
+  const name = 'lockscreen-sfondo-' + Date.now().toString(36) + ext;
+  fs.copyFileSync(filePaths[0], path.join(dataDir(), name));
+  writeLs({ ...c, image: name, bg: 'immagine' });
+  return lsFull();
+});
+ipcMain.handle('ls:image-clear', () => {
+  if (!data) return null;
+  const c = readLs();
+  if (c.image) { try { fs.unlinkSync(path.join(dataDir(), c.image)); } catch {} }
+  writeLs({ ...c, image: '', bg: c.bg === 'immagine' ? 'aurora' : c.bg });
+  return lsFull();
+});
+
 // ---------- IPC della cassaforte ----------
 const isStrong = (p) => typeof p === 'string' && p.length >= 8;
 function removePlainCopies(removeLegacy) {
@@ -362,7 +413,7 @@ function removePlainCopies(removeLegacy) {
   }
 }
 
-ipcMain.handle('lock:state', () => ({ configured: !!vault, locked: !!vault && !dataKey, hint: vault ? vault.hint || '' : '', wait: Math.max(0, nextTry - Date.now()), recovered: recoveredSession, hasLegacy: LEGACY_NAMES.some(n => { const o = path.join(app.getPath('appData'), n); return o !== dataDir() && fs.existsSync(o) && fs.readdirSync(o).some(f => /\.json$/.test(f)); }) }));
+ipcMain.handle('lock:state', () => ({ lockscreen: lsFull(), configured: !!vault, locked: !!vault && !dataKey, hint: vault ? vault.hint || '' : '', wait: Math.max(0, nextTry - Date.now()), recovered: recoveredSession, hasLegacy: LEGACY_NAMES.some(n => { const o = path.join(app.getPath('appData'), n); return o !== dataDir() && fs.existsSync(o) && fs.readdirSync(o).some(f => /\.json$/.test(f)); }) }));
 
 ipcMain.handle('lock:unlock', async (_e, { secret, recovery }) => {
   if (!vault) return { ok: true };
