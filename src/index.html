@@ -16,10 +16,11 @@
           <button class="tl tl-min" data-win="minimize" title="Riduci"></button>
           <button class="tl tl-max" data-win="maximize" title="Ingrandisci"></button>
         </div>
+        <button class="side-toggle" id="btn-side" title="Riduci la barra laterale (Ctrl+B)"><svg viewBox="0 0 24 24"><use href="#i-sidebar"/></svg></button>
       </div>
       <div class="brand">
         <img src="../build/icon.png" alt="" class="brand-icon">
-        <span>Promemo</span>
+        <span class="brand-name">Promemo</span>
       </div>
       <div class="side-scroll">
       <nav class="nav" id="nav"></nav>
@@ -34,8 +35,8 @@
       </div>
       </div>
       <div class="side-bottom">
-        <button class="side-btn" id="btn-settings">
-          <svg viewBox="0 0 24 24"><use href="#i-gear"/></svg> Impostazioni
+        <button class="side-btn" id="btn-settings" title="Impostazioni">
+          <svg viewBox="0 0 24 24"><use href="#i-gear"/></svg> <span class="nav-lbl">Impostazioni</span>
         </button>
       </div>
     </aside>
@@ -48,6 +49,7 @@
             <svg viewBox="0 0 24 24"><use href="#i-search"/></svg>
             <input id="global-search" placeholder="Cerca" spellcheck="false"><kbd class="kbd-hint" data-action="palette" title="Palette comandi">Ctrl K</kbd>
           </label>
+          <button class="ai-btn" id="btn-ai" title="Assistente (Ctrl+J)"><svg viewBox="0 0 24 24"><use href="#i-spark"/></svg><span>Assistente</span></button>
           <button class="icon-btn sync-btn" id="btn-sync" hidden><svg viewBox="0 0 24 24"><use href="#i-sync"/></svg></button>
           <button class="btn-primary" id="btn-new">
             <svg viewBox="0 0 24 24"><use href="#i-plus"/></svg> Nuovo
@@ -61,6 +63,7 @@
   <div class="modal-backdrop" id="modal-backdrop" hidden>
     <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
   </div>
+  <aside class="ai-drawer" id="ai-drawer" hidden></aside>
   <div class="popover-layer" id="popover-layer"></div>
   <div class="toast" id="toast"></div>
 
@@ -78,6 +81,10 @@
       <symbol id="i-arrow-r" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
       <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
       <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4.5 3.5"/></symbol>
+      <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15M6 8.5h1.2M6 11h1.2"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.9z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M4.5 12 20 4.5 15.5 20l-3-6.5z"/><path d="m12.5 13.5 7.5-9"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
       <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
       <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
@@ -107,5 +114,6 @@
   </svg>
 
   <script src="app.js"></script>
+  <script src="assistant.js"></script>
 </body>
 </html>

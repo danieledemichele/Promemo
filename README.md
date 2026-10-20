@@ -25,6 +25,25 @@ Promemo può chiedere una password a ogni apertura (*Impostazioni → Password a
 - Finché Promemo è bloccata non può inviare notifiche né sincronizzare: dopo lo sblocco resta attiva (anche nell'area di notifica) fino all'uscita.
 - I backup esportati in JSON non sono cifrati.
 
+## Assistente (IA)
+Nella Home e con il pulsante **Assistente** (Ctrl+J) si apre una conversazione che organizza la giornata di oggi o di domani:
+1. l'assistente legge impegni del giorno, passi in ritardo e scadenze vicine;
+2. fa fino a 4 domande una alla volta (priorità, quando ti concentri meglio, vincoli, quanto riempire la giornata), con risposte rapide da cliccare;
+3. propone un piano a blocchi (impegni fissi, lavoro/studio, passi, pause, pasti, spostamenti) che puoi correggere scrivendo (“più pause”, “finisci alle 18”);
+4. **Aggiungi all'agenda** crea i blocchi come eventi (con promemoria a scelta); si possono sostituire o rimuovere.
+
+Motori supportati (*Impostazioni → Assistente*):
+| Motore | Costo | Privacy |
+|---|---|---|
+| Claude (API Anthropic) — `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-opus-5-5` | a consumo, qualche centesimo a pianificazione | impegni del giorno inviati ad Anthropic |
+| Ollama sul computer (es. `llama3.1`) | gratis | tutto resta in locale |
+| Compatibile OpenAI (OpenAI, LM Studio, Groq, OpenRouter…) | dipende dal servizio | dipende dal servizio |
+
+La chiave API è salvata cifrata insieme alle altre credenziali.
+
+## Barra laterale
+Il pulsante in alto a sinistra (o Ctrl+B) riduce la barra a sole icone: Home, Progetti, Agenda, Promemoria, Account collegati e Impostazioni, con i contatori come pallini. Sotto i 1060 px di larghezza si riduce da sola.
+
 ## Impostazioni
 Finestra a sezioni: **Generale**, **Aspetto** (tema e colore principale), **Calendario** (vista predefinita, inizio giornata, fine settimana), **Notifiche**, **Password**, **Schermata di blocco**, **Dati e backup**.
 
@@ -69,12 +88,12 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.5.0.AppImage e dist/trama_1.5.0_amd64.deb
-sudo apt install ./dist/trama_1.5.0_amd64.deb
+npm run dist        # dist/Promemo-1.6.0.AppImage e dist/trama_1.6.0_amd64.deb
+sudo apt install ./dist/trama_1.6.0_amd64.deb
 ```
 
 ## Scorciatoie
-Ctrl+K palette comandi · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni · Esc chiude popup e finestre.
+Ctrl+K palette comandi · Ctrl+J assistente · Ctrl+B barra laterale · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni · Esc chiude popup e finestre.
 
 ## Dati
 `~/.config/Promemo/promemo.json` (scrittura atomica). Backup da *Impostazioni → Esporta*.
@@ -89,6 +108,7 @@ Al primo avvio i dati vengono copiati dalla cartella del vecchio nome. Gli accou
 ## Struttura
 ```
 main.js        processo principale: archivio, promemoria, vassoio, IPC
+ai.js          motori IA (Anthropic, Ollama, compatibili OpenAI)
 vault.js       cifratura locale (scrypt + AES-256-GCM, chiave di recupero)
 sync.js        Google Calendar (OAuth PKCE), Notion API, feed .ics; unione e invio modifiche
 ics.js         parser iCalendar con fusi orari e ricorrenze

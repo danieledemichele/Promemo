@@ -93,6 +93,10 @@ function groupInfo(e) {
     const c = a && a.calendars.find(x => x.id === e.source.cal);
     return { key: `${e.source.acc}::?`, color: c?.color || '#8e8e93', name: c?.name || '', visible: !a || a.enabled, acc: a };
   }
+  if (e.planDay && !e.projectId && typeof TIPI !== 'undefined' && TIPI[e.planType]) {
+    const lg = localGroup(null);
+    return { key: lg.key, color: TIPI[e.planType][1], name: 'Piano · ' + TIPI[e.planType][0], visible: lg.visible };
+  }
   return localGroup(proj(e.projectId));
 }
 
@@ -357,7 +361,7 @@ function renderSidebar() {
     ['account', 'i-sync', 'Account collegati', (data.accounts || []).some(a => a.error) ? `<span class="badge warn">!</span>` : (data.accounts || []).length ? `<span class="count">${data.accounts.length}</span>` : ''],
   ];
   $('#nav').innerHTML = items.map(([v, ic, label, extra]) =>
-    `<button class="nav-item ${ui.view === v && !ui.search ? 'active' : ''}" data-action="nav" data-view="${v}">${icon(ic)} ${label}${extra}</button>`).join('');
+    `<button class="nav-item ${ui.view === v && !ui.search ? 'active' : ''}" data-action="nav" data-view="${v}" title="${label}">${icon(ic)}<span class="nav-lbl">${label}</span>${extra}</button>`).join('');
 
   $('#side-cats').innerHTML = data.categories.map(c => {
     const n = data.projects.filter(p => p.category === c.id && p.status !== 'archiviato').length;
@@ -472,6 +476,7 @@ function viewHome() {
     </div>
   </section>
 
+  ${typeof aiHomeCard === 'function' ? aiHomeCard() : ''}
   <div class="home-grid">
     <section class="panel">
       <div class="panel-head"><h2>Oggi</h2><button class="link" data-action="goto-agenda" data-date="${dayKey(now)}">Apri agenda</button></div>
@@ -626,7 +631,7 @@ const HOUR_H = 48;
 function agendaToolbar(title, sub) {
   const mode = calMode();
   return `<div class="agenda-top">
-    <div class="agenda-title"><h1 class="display" style="text-transform:capitalize">${title}</h1>${sub ? `<span class="agenda-sub">${sub}</span>` : ''}</div>
+    <div class="agenda-title"><h1 class="display cap1">${title}</h1>${sub ? `<span class="agenda-sub">${sub}</span>` : ''}</div>
     <div class="agenda-tools">
       <div class="segmented filt" title="Mostra">
         ${[['appuntamento', 'Appuntamenti'], ['evento', 'Eventi'], ['passo', 'Passi']].map(([k, l]) => `<button class="${ui.chips[k] ? 'on' : ''}" data-action="chip" data-k="${k}">${l}</button>`).join('')}
@@ -706,7 +711,7 @@ function viewTimeGrid(days) {
   const tz = (Intl.DateTimeFormat('it-IT', { timeZoneName: 'short' }).formatToParts(now).find(p => p.type === 'timeZoneName') || {}).value || '';
   return `<div class="tg" style="--n:${days.length}">
     <div class="tg-head"><div class="tg-tz">${esc(tz)}</div>${head}</div>
-    <div class="tg-allrow ${hasAll ? '' : 'empty'}"><div class="tg-all-label">Tutto il giorno</div>${allRow}</div>
+    <div class="tg-allrow ${hasAll ? '' : 'noall'}"><div class="tg-all-label">Tutto il giorno</div>${allRow}</div>
     <div class="tg-body" id="tg-body"><div class="tg-grid" style="height:${24 * HOUR_H}px"><div class="tg-gutter">${gutter}</div>${cols}</div></div>
   </div>`;
 }
@@ -1014,6 +1019,7 @@ function viewSearch() {
 }
 
 function render() {
+  applySidebar();
   renderSidebar();
   const v = $('#view');
   const scroll = v.querySelector('.detail-pane')?.scrollTop;
@@ -1912,11 +1918,27 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); modalNew(); }
   if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); $('#global-search').focus(); }
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
+  if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); toggleSidebar(); }
   if (mod && ['1', '2', '3', '4', '5'].includes(e.key)) { e.preventDefault(); go(['home', 'progetti', 'agenda', 'promemoria', 'account'][+e.key - 1]); }
 });
 $('#modal-backdrop').addEventListener('mousedown', (e) => { if (e.target.id === 'modal-backdrop') closeModal(); });
 $('#btn-new').addEventListener('click', modalNew);
 $('#btn-settings').addEventListener('click', () => modalSettings());
+function applySidebar() {
+  const app = $('.app');
+  const manual = !!(data && data.settings.sidebarCollapsed);
+  const auto = window.innerWidth < 1060;
+  app.classList.toggle('collapsed', manual || auto);
+  $('#btn-side').title = app.classList.contains('collapsed') ? 'Espandi la barra laterale (Ctrl+B)' : 'Riduci la barra laterale (Ctrl+B)';
+}
+function toggleSidebar() {
+  if (!data) return;
+  const app = $('.app');
+  data.settings.sidebarCollapsed = !app.classList.contains('collapsed');
+  save(); applySidebar();
+}
+$('#btn-side').addEventListener('click', toggleSidebar);
+window.addEventListener('resize', () => { applySidebar(); });
 $('#btn-sync').addEventListener('click', () => actions['sync-now']());
 $('#global-search').addEventListener('input', (e) => { ui.search = e.target.value.trim(); render(); });
 document.querySelector('.titlebar-drag').addEventListener('dblclick', () => api.maximize());

@@ -2,6 +2,7 @@
 const { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage, dialog, shell, safeStorage } = require('electron');
 const { createSync } = require('./sync');
 const vaultLib = require('./vault');
+const aiLib = require('./ai');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -398,6 +399,23 @@ ipcMain.handle('ls:image-clear', () => {
   writeLs({ ...c, image: '', bg: c.bg === 'immagine' ? 'aurora' : c.bg });
   return lsFull();
 });
+
+// ---------- Assistente IA ----------
+ipcMain.handle('ai:chat', async (_e, { system, messages }) => {
+  if (!data) return { ok: false, error: 'Promemo è bloccata' };
+  const cfg = data.settings.ai || {};
+  try { return { ok: true, text: await aiLib.chat(cfg, loadSecrets()['ai:' + cfg.provider], system, messages) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('ai:key', (_e, { provider, key }) => {
+  if (!data) return false;
+  const s = loadSecrets();
+  if (key) s['ai:' + provider] = key; else delete s['ai:' + provider];
+  saveSecrets();
+  return true;
+});
+ipcMain.handle('ai:has-key', (_e, provider) => !!(data && loadSecrets()['ai:' + provider]));
+ipcMain.handle('ai:defaults', () => aiLib.DEFAULTS);
 
 // ---------- IPC della cassaforte ----------
 const isStrong = (p) => typeof p === 'string' && p.length >= 8;

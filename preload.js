@@ -34,5 +34,8 @@ contextBridge.exposeInMainWorld('promemo', {
   lsReset: () => ipcRenderer.invoke('ls:reset'),
   lsImage: () => ipcRenderer.invoke('ls:image'),
   lsImageClear: () => ipcRenderer.invoke('ls:image-clear'),
+  aiChat: (a) => ipcRenderer.invoke('ai:chat', a),
+  aiKey: (a) => ipcRenderer.invoke('ai:key', a),
+  aiHasKey: (p) => ipcRenderer.invoke('ai:has-key', p),
   onMaximized: (cb) => ipcRenderer.on('maximized', (_e, v) => cb(v)),
 });
