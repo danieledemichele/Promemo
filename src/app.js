@@ -1,7 +1,7 @@
-/* Trama — interfaccia */
+/* Promemo — interfaccia */
 'use strict';
 
-const api = window.trama;
+const api = window.promemo;
 let data = null;
 const ui = {
   view: 'home',
@@ -50,14 +50,15 @@ const COLORS = ['orange', 'green', 'blue', 'purple', 'pink', 'teal', 'yellow', '
 const CAT_ICONS = ['plane', 'home', 'book', 'briefcase', 'heart', 'dumbbell', 'money', 'cap', 'folder'];
 
 const cat = (id) => data.categories.find(c => c.id === id);
-const PROV = { google: 'Google Calendar', notion: 'Notion', ics: 'Calendario web' };
+const PROV = { google: 'Google Calendar', notion: 'Notion', ics: 'Calendario web', calendly: 'Calendly' };
+const provLetter = (p) => ({ google: 'G', notion: 'N', calendly: 'C' })[p] || icon('i-calendar');
 const accOf = (e) => { const t = e.source || e.pushTo; return t ? (data.accounts || []).find(a => a.id === t.acc) : null; };
 const calOf = (e) => { const t = e.source || e.pushTo; const a = accOf(e); return a ? a.calendars.find(c => c.id === t.cal) : null; };
 const isReadOnly = (e) => { const c = calOf(e); return !!(e.source && c && !c.writable); };
 function srcPill(e) {
   const a = accOf(e); if (!a) return '';
   const c = calOf(e);
-  const label = a.provider === 'google' ? 'Google' : a.provider === 'notion' ? 'Notion' : esc(a.name);
+  const label = a.provider === 'ics' ? esc(a.name) : PROV[a.provider].replace(' Calendar', '');
   const pending = e.pushTo || (e.source && !e.source.rid);
   const g = groupInfo(e);
   return `<span class="pill src" title="${esc(a.name)}${c ? ' · ' + esc(c.name) : ''}"><i style="background:${esc(g.color)}"></i>${pending ? 'Invio a ' + label : esc(g.name || label)}</span>`;
@@ -241,7 +242,7 @@ function remindersList() {
 }
 
 let collapsed = {};
-try { collapsed = JSON.parse(localStorage.getItem('trama.collapsed') || '{}'); } catch { collapsed = {}; }
+try { collapsed = JSON.parse(localStorage.getItem('promemo.collapsed') || '{}'); } catch { collapsed = {}; }
 function calRow({ type, acc, gid, color, name, visible, count }) {
   return `<div class="cal-row ${visible ? '' : 'off'}">
     <button class="cal-check" style="--c:${esc(color)}" data-action="grp-toggle" data-type="${type}" data-acc="${esc(acc || '')}" data-gid="${esc(gid)}" title="${visible ? 'Nascondi' : 'Mostra'}">${icon('i-check')}</button>
@@ -259,7 +260,7 @@ function renderSideCals() {
       <div class="cal-groups">${rows}${extra}</div>
     </div>`;
   let html = '';
-  // Trama, su questo computer
+  // Promemo, su questo computer
   const lg = localGroup(null);
   let rows = calRow({ type: 'local', gid: '', color: lg.color, name: 'Personale', visible: lg.visible, count: upcoming(e => !e.source && !proj(e.projectId)?.category) });
   for (const c of data.categories) {
@@ -272,7 +273,7 @@ function renderSideCals() {
     const r = groups.map(g => calRow({ type: 'acc', acc: a.id, gid: g.id, color: g.color, name: g.name || a.name, visible: g.visible !== false, count: upcoming(e => e.source && e.source.acc === a.id && e.source.group === g.id) })).join('');
     const hint = a.provider === 'notion' && !(a.config && a.config.colorProp)
       ? `<button class="cal-hint" data-action="notion-color" data-id="${a.id}">${icon('i-palette')} Colora per colonna (es. Area)…</button>` : '';
-    html += block(a.id, `<span class="prov mini prov-${a.provider}">${a.provider === 'google' ? 'G' : a.provider === 'notion' ? 'N' : icon('i-calendar')}</span><span class="cal-acc-name">${esc(a.name)}</span>${a.error ? '<span class="cal-err" title="' + esc(a.error) + '"></span>' : ''}${a.enabled ? '' : '<span class="tiny">pausa</span>'}`, r || '<div class="cal-empty">Nessun evento</div>', hint);
+    html += block(a.id, `<span class="prov mini prov-${a.provider}">${provLetter(a.provider)}</span><span class="cal-acc-name">${esc(a.name)}</span>${a.error ? '<span class="cal-err" title="' + esc(a.error) + '"></span>' : ''}${a.enabled ? '' : '<span class="tiny">pausa</span>'}`, r || '<div class="cal-empty">Nessun evento</div>', hint);
   }
   $('#side-cals').innerHTML = html;
 }
@@ -365,52 +366,132 @@ function renderSidebar() {
 }
 
 // ---------- Viste ----------
+function countdown(d) {
+  const ms = d - new Date();
+  if (ms < 0) return 'adesso';
+  const min = Math.round(ms / 60000);
+  if (min < 60) return `tra ${min} min`;
+  if (min < 60 * 6) return `tra ${Math.floor(min / 60)} h ${min % 60 ? (min % 60) + ' min' : ''}`.trim();
+  return `${relDay(d).toLowerCase()} alle ${fmtHM(d)}`;
+}
+const itemStart = (it) => parse(it.ev ? it.ev.start : it.step.due);
+const itemEnd = (it) => it.ev ? parse(it.ev.end || it.ev.start) : parse(it.step.due);
+const itemColor = (it) => it.ev ? groupInfo(it.ev).color : localGroup(it.project).color;
+const itemTitle = (it) => it.ev ? it.ev.title : it.step.text;
+const itemAction = (it) => it.ev ? `data-action="edit-event" data-id="${it.ev.id}"` : `data-action="open-project" data-id="${it.project.id}"`;
+
+function timelineRow(it, now) {
+  const s = itemStart(it), e = itemEnd(it);
+  const past = e < now && !(it.step && !it.step.done);
+  const live = it.ev && s <= now && now <= e;
+  const sub = it.ev
+    ? [it.ev.location ? `${icon('i-pin')} ${esc(it.ev.location)}` : '', proj(it.ev.projectId) ? `${icon('i-folder')} ${esc(proj(it.ev.projectId).title)}` : ''].filter(Boolean).join('<span class="sep"></span>')
+    : `${icon('i-folder')} ${esc(it.project.title)}`;
+  const g = it.ev ? groupInfo(it.ev) : localGroup(it.project);
+  return `<div class="tl-row ${past ? 'past' : ''} ${live ? 'live' : ''}" style="--gc:${esc(g.color)}" ${itemAction(it)}>
+    <div class="tl-time"><b>${fmtHM(s)}</b>${it.ev && !it.ev.allDay ? `<span>${fmtHM(e)}</span>` : ''}</div>
+    <div class="tl-dot">${it.step ? `<button class="check mini ${it.step.done ? 'on' : ''}" data-action="complete-step" data-pid="${it.project.id}" data-id="${it.step.id}" title="Segna come fatto">${icon('i-check')}</button>` : '<i></i>'}</div>
+    <div class="tl-body">
+      <div class="tl-title">${esc(itemTitle(it))}${live ? '<span class="pill live">In corso</span>' : ''}${it.step && !it.step.done && s < now ? '<span class="pill live">In ritardo</span>' : ''}</div>
+      <div class="tl-sub"><span class="tl-grp"><i></i>${esc(g.name)}</span>${sub ? '<span class="sep"></span>' + sub : ''}</div>
+    </div>
+  </div>`;
+}
+
 function viewHome() {
   const now = new Date();
   const h = now.getHours();
   const greet = h < 5 ? 'Buonanotte' : h < 13 ? 'Buongiorno' : h < 18 ? 'Buon pomeriggio' : 'Buonasera';
+  const name = (data.settings.userName || '').trim();
   const today = itemsOn(now);
+  const allDay = today.filter(it => it.ev && (it.ev.allDay || spanDays(it.ev) > 1));
+  const timed = today.filter(it => !allDay.includes(it)).sort((a, b) => itemStart(a) - itemStart(b));
+  // linea "adesso"
+  let rows = '', placed = false;
+  for (const it of timed) {
+    if (!placed && itemStart(it) > now) { rows += `<div class="now-line"><span>Adesso · ${fmtHM(now)}</span></div>`; placed = true; }
+    rows += timelineRow(it, now);
+  }
+  if (!placed && timed.length) rows += `<div class="now-line"><span>Adesso · ${fmtHM(now)}</span></div>`;
+
+  // prossimo impegno e settimana
+  const next = [];
+  for (let i = 0; i < 8 && !next.length; i++) for (const it of itemsOn(addDays(now, i))) {
+    const st = itemStart(it);
+    if (st > now && !(it.ev && it.ev.allDay) && !(it.step && it.step.done)) { next.push(it); break; }
+  }
+  const nx = next[0];
+  const overdue = remindersList().filter(r => r.kind === 'st' && r.when < now);
+  const wkStart = addDays(startOfDay(now), -((now.getDay() + 6) % 7));
+  const week = [...Array(7)].map((_, i) => { const d = addDays(wkStart, i); return { d, its: itemsOn(d) }; });
+  const weekTotal = week.reduce((n, w) => n + w.its.length, 0);
+  const maxDay = Math.max(1, ...week.map(w => w.its.length));
   const resume = data.projects.filter(p => p.status === 'attivo').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const upcoming = [];
-  for (let i = 1; i <= 7 && upcoming.length < 4; i++) {
+  for (let i = 1; i <= 7 && upcoming.length < 5; i++) {
     for (const it of itemsOn(addDays(now, i))) {
       if (it.ev && spanDays(it.ev) > 1 && dayKey(parse(it.ev.start)) !== dayKey(addDays(now, i))) continue;
       if (!upcoming.find(u => u.ev && it.ev && u.ev.id === it.ev.id)) upcoming.push(it);
-      if (upcoming.length >= 4) break;
+      if (upcoming.length >= 5) break;
     }
   }
-  const renderItem = (it) => it.ev ? eventCard(it.ev) : stepCard(it.step, it.project);
 
   return `
-  <div class="eyebrow">${greet}</div>
-  <h1 class="large-title">Ecco come procede.</h1>
-  <div class="grid-2">
+  <section class="hero">
     <div>
-      <div class="section-head"><h2>Oggi · ${fmtLong(now)}</h2><button class="link" data-action="goto-agenda" data-date="${dayKey(now)}">Vedi in agenda</button></div>
-      <div class="stack">
-        ${today.length ? today.map(renderItem).join('') : `<div class="empty"><b>Giornata libera</b>Nessun impegno per oggi.</div>`}
-      </div>
-      <div class="section-head"><h2>Da riprendere</h2><button class="link" data-action="nav" data-view="progetti">Vedi tutti (${resume.length})</button></div>
-      <div class="stack">
-        ${resume.length ? resume.slice(0, 4).map(p => projectCard(p)).join('') : `<div class="empty"><b>Nessun progetto attivo</b>Crea un progetto con il tasto “Nuovo”.</div>`}
+      <div class="eyebrow">${fmtLong(now)}</div>
+      <h1 class="display">${greet}${name ? ', ' + esc(name) : ''}.</h1>
+      <div class="subtitle">${today.length ? `Oggi hai <b>${today.length}</b> ${today.length === 1 ? 'impegno' : 'impegni'}${overdue.length ? `, e ${overdue.length} ${overdue.length === 1 ? 'passo' : 'passi'} in ritardo` : ''}.` : 'Nessun impegno oggi: giornata libera.'}</div>
+    </div>
+  </section>
+
+  <section class="bento">
+    <div class="tile tile-next ${nx ? 'clickable' : ''}" ${nx ? itemAction(nx) : ''} style="--gc:${nx ? esc(itemColor(nx)) : 'var(--accent)'}">
+      <div class="tile-label">${icon('i-clock')} Prossimo</div>
+      ${nx ? `<div class="tile-big">${countdown(itemStart(nx))}</div><div class="tile-title">${esc(itemTitle(nx))}</div><div class="tile-sub">${fmtHM(itemStart(nx))}${nx.ev && nx.ev.location ? ' · ' + esc(nx.ev.location) : ''}</div>`
+           : `<div class="tile-big">—</div><div class="tile-sub">Niente in arrivo nei prossimi giorni</div>`}
+    </div>
+    <div class="tile clickable" data-action="goto-agenda" data-date="${dayKey(now)}">
+      <div class="tile-label">${icon('i-calendar')} Oggi</div>
+      <div class="tile-big">${today.length}</div><div class="tile-sub">${allDay.length ? allDay.length + ' tutto il giorno · ' : ''}${timed.filter(t => itemEnd(t) >= now).length} ancora da fare</div>
+    </div>
+    <div class="tile clickable ${overdue.length ? 'warn' : ''}" data-action="nav" data-view="promemoria">
+      <div class="tile-label">${icon('i-bell')} In ritardo</div>
+      <div class="tile-big">${overdue.length}</div><div class="tile-sub">${overdue.length ? esc(overdue[0].title) : 'Tutto in pari'}</div>
+    </div>
+    <div class="tile tile-week">
+      <div class="tile-label">${icon('i-calendar')} Questa settimana · ${weekTotal}</div>
+      <div class="week">
+        ${week.map(w => `<button class="wk ${sameDay(w.d, now) ? 'today' : ''} ${w.d < startOfDay(now) ? 'past' : ''}" data-action="goto-agenda" data-date="${dayKey(w.d)}" title="${w.its.length} elementi">
+          <span class="wk-bar"><i style="height:${Math.round(w.its.length / maxDay * 100)}%"></i></span>
+          <span class="wk-d">${'LMMGVSD'[(w.d.getDay() + 6) % 7]}</span><span class="wk-n">${w.d.getDate()}</span>
+          <span class="wk-dots">${[...new Set(w.its.map(itemColor))].slice(0, 3).map(c => `<i style="background:${esc(c)}"></i>`).join('')}</span>
+        </button>`).join('')}
       </div>
     </div>
-    <div>
-      <div class="section-head"><h2>Prossimi giorni</h2><button class="link" data-action="nav" data-view="agenda">Apri agenda</button></div>
-      <div class="stack">
-        ${upcoming.length ? upcoming.map(renderItem).join('') : `<div class="empty"><b>Settimana tranquilla</b>Niente in programma nei prossimi 7 giorni.</div>`}
-      </div>
-      <div class="section-head"><h2>Raccolte</h2><button class="link" data-action="new-cat">Nuova</button></div>
-      <div class="coll-grid">
-        ${data.categories.map(c => {
-          const ps = data.projects.filter(p => p.category === c.id && p.status !== 'archiviato');
-          const open = ps.reduce((n, p) => n + p.steps.filter(s => !s.done).length, 0);
-          return `<div class="card clickable coll" data-action="cat" data-id="${c.id}">
-            <span class="cat-dot" style="background:${hex(c.color)}">${icon('c-' + c.icon)}</span>
-            <div><div class="coll-name">${esc(c.name)}</div><div class="tiny">${ps.length} progett${ps.length === 1 ? 'o' : 'i'} · ${open} pass${open === 1 ? 'o' : 'i'}</div></div>
-          </div>`;
-        }).join('')}
-      </div>
+  </section>
+
+  <div class="home-grid">
+    <section class="panel">
+      <div class="panel-head"><h2>Oggi</h2><button class="link" data-action="goto-agenda" data-date="${dayKey(now)}">Apri agenda</button></div>
+      ${allDay.length ? `<div class="allday">${allDay.map(it => `<button class="allday-chip" style="--gc:${esc(itemColor(it))}" ${itemAction(it)}><i></i>${esc(itemTitle(it))}${spanDays(it.ev) > 1 ? ` <span class="muted">· ${spanDays(it.ev)} giorni</span>` : ''}</button>`).join('')}</div>` : ''}
+      ${timed.length ? `<div class="timeline-today">${rows}</div>` : (allDay.length ? '' : `<div class="empty"><b>Giornata libera</b>Clicca “Nuovo” o un giorno in agenda per aggiungere qualcosa.</div>`)}
+    </section>
+    <div class="home-side">
+      <section class="panel">
+        <div class="panel-head"><h2>In arrivo</h2></div>
+        ${upcoming.length ? `<div class="mini-list">${upcoming.map(it => `<button class="mini-row" style="--gc:${esc(itemColor(it))}" ${itemAction(it)}>
+          <span class="mini-date"><b>${itemStart(it).getDate()}</b>${MESI[itemStart(it).getMonth()]}</span>
+          <span class="mini-body"><span class="mini-title">${esc(itemTitle(it))}</span><span class="mini-sub">${relDay(itemStart(it))}${it.ev && it.ev.allDay ? '' : ' · ' + fmtHM(itemStart(it))}</span></span>
+        </button>`).join('')}</div>` : '<div class="empty">Settimana tranquilla.</div>'}
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>Da riprendere</h2><button class="link" data-action="nav" data-view="progetti">Tutti (${resume.length})</button></div>
+        <div class="mini-list">${resume.slice(0, 4).map(p => { const ns = nextStep(p); const c = cat(p.category); return `<button class="mini-row" style="--gc:${esc(c ? hex(c.color) : 'var(--accent)')}" data-action="open-project" data-id="${p.id}">
+          <span class="proj-ic">${c ? icon('c-' + c.icon) : icon('i-folder')}</span>
+          <span class="mini-body"><span class="mini-title">${esc(p.title)}${p.starred ? ' <span class="star-s">★</span>' : ''}</span><span class="mini-sub">${ns ? esc(ns.text) : 'Nessun passo aperto'}</span></span>
+        </button>`; }).join('') || '<div class="empty">Nessun progetto attivo.</div>'}</div>
+      </section>
     </div>
   </div>`;
 }
@@ -548,10 +629,13 @@ function viewAgenda() {
   for (let i = 0; i < 42; i++) {
     const d = addDays(gridStart, i);
     const its = itemsOn(d, ui.chips);
-    const cols = [...new Set(its.map(x => x.ev ? groupInfo(x.ev).color : localGroup(x.project).color))].slice(0, 4);
-    cells.push(`<button class="day ${d.getMonth() !== m.getMonth() ? 'other' : ''} ${sameDay(d, today) ? 'today' : ''} ${dayKey(d) === ui.sel ? 'sel' : ''}" data-action="sel-day" data-date="${dayKey(d)}">
+    const chips = its.slice(0, 3).map(x => {
+      const multi = x.ev && (x.ev.allDay || spanDays(x.ev) > 1);
+      return `<span class="dchip ${multi ? 'bar' : ''}" style="--gc:${esc(itemColor(x))}"><i></i>${multi ? '' : `<em>${fmtHM(itemStart(x))}</em>`}${esc(itemTitle(x))}</span>`;
+    }).join('');
+    cells.push(`<button class="day ${d.getMonth() !== m.getMonth() ? 'other' : ''} ${sameDay(d, today) ? 'today' : ''} ${dayKey(d) === ui.sel ? 'sel' : ''} ${(d.getDay() + 6) % 7 > 4 ? 'we' : ''}" data-action="sel-day" data-date="${dayKey(d)}">
       <span class="num">${d.getDate()}</span>
-      <span class="marks">${cols.map(c => `<i style="background:${esc(c)}"></i>`).join('')}</span>
+      <span class="dchips">${chips}${its.length > 3 ? `<span class="dmore">+${its.length - 3}</span>` : ''}</span>
     </button>`);
   }
   const selD = parse(ui.sel);
@@ -559,39 +643,40 @@ function viewAgenda() {
   const chip = (k, label, color) => `<button class="chip ${ui.chips[k] ? 'on' : ''}" data-action="chip" data-k="${k}"><span class="mark" style="background:${ui.chips[k] ? color : 'var(--text-3)'}"></span>${label}</button>`;
 
   return `
-  <div class="agenda">
-    <div>
-      <div class="eyebrow">Tempo e continuità</div>
-      <h1 class="large-title" style="font-size:26px">Agenda</h1>
-      <div class="subtitle">Giorno per giorno, appuntamenti, eventi e passi dei tuoi progetti.</div>
-      <div class="chips">
-        ${chip('appuntamento', 'Appuntamenti', 'var(--text-2)')}
-        ${chip('evento', 'Eventi', 'var(--text-2)')}
-        ${chip('passo', 'Passi', 'var(--text-2)')}
+  <div class="agenda modern">
+    <div class="agenda-main">
+      <div class="agenda-top">
+        <div>
+          <div class="eyebrow">Agenda</div>
+          <h1 class="display" style="text-transform:capitalize">${fmtMonth(m)}</h1>
+        </div>
+        <div class="agenda-tools">
+          <div class="segmented">
+            ${[['appuntamento', 'Appuntamenti'], ['evento', 'Eventi'], ['passo', 'Passi']].map(([k, l]) => `<button class="${ui.chips[k] ? 'on' : ''}" data-action="chip" data-k="${k}">${l}</button>`).join('')}
+          </div>
+          <div class="nav-pill">
+            <button class="icon-btn" data-action="cal-prev" title="Mese precedente">${icon('i-chev-l')}</button>
+            <button class="btn small" data-action="cal-today">Oggi</button>
+            <button class="icon-btn" data-action="cal-next" title="Mese successivo">${icon('i-chev-r')}</button>
+          </div>
+        </div>
       </div>
       <div class="cal">
-        <div class="cal-head">
-          <h3>${fmtMonth(m)}</h3>
-          <button class="btn small" data-action="cal-today">Oggi</button>
-          <button class="icon-btn" data-action="cal-prev">${icon('i-chev-l')}</button>
-          <button class="icon-btn" data-action="cal-next">${icon('i-chev-r')}</button>
-        </div>
         <div class="cal-grid">
           ${['L', 'M', 'M', 'G', 'V', 'S', 'D'].map(x => `<div class="dow">${x}</div>`).join('')}
           ${cells.join('')}
         </div>
-        <div class="cal-legend"><span>${icon('i-palette')} I colori seguono i calendari nella barra laterale</span></div>
       </div>
     </div>
-    <div style="padding-top:20px">
-      <div class="row" style="margin-bottom:12px">
-        <h2 class="day-list-title grow" style="margin:0">${relDay(selD) === 'Oggi' || relDay(selD) === 'Domani' ? relDay(selD) + ' · ' : ''}${fmtLong(selD)} <span class="muted" style="font-weight:500">(${its.length})</span></h2>
-        <button class="btn small" data-action="new-event" data-date="${ui.sel}">${icon('i-plus')} Appuntamento</button>
+    <aside class="day-side">
+      <div class="day-side-head">
+        <div class="day-big"><b>${selD.getDate()}</b><span>${selD.toLocaleDateString('it-IT', { weekday: 'long' })}<small>${relDay(selD) === 'Oggi' || relDay(selD) === 'Domani' ? relDay(selD) + ' · ' : ''}${its.length} ${its.length === 1 ? 'elemento' : 'elementi'}</small></span></div>
+        <button class="icon-btn round" data-action="new-event" data-date="${ui.sel}" title="Nuovo evento">${icon('i-plus')}</button>
       </div>
       <div class="stack">
         ${its.length ? its.map(it => it.ev ? eventCard(it.ev, { showCat: true }) : stepCard(it.step, it.project)).join('') : `<div class="empty"><b>Niente in programma</b>Fai clic su un giorno del calendario per aggiungere un evento.</div>`}
       </div>
-    </div>
+    </aside>
   </div>`;
 }
 
@@ -628,7 +713,7 @@ function viewReminders() {
   <div style="max-width:820px">
     <div class="eyebrow">Non perdere il filo</div>
     <h1 class="large-title">Promemoria</h1>
-    <div class="subtitle">Riceverai una notifica sul desktop all'orario impostato, anche con la finestra chiusa (Trama resta nell'area di notifica).</div>
+    <div class="subtitle">Riceverai una notifica sul desktop all'orario impostato, anche con la finestra chiusa (Promemo resta nell'area di notifica).</div>
     ${body || `<div class="empty" style="margin-top:24px"><b>Nessun promemoria</b>Aggiungi un promemoria a un passo o a un appuntamento.</div>`}
   </div>`;
 }
@@ -645,7 +730,7 @@ function renderSyncButton() {
   b.classList.toggle('err', accs.some(a => a.error));
 }
 
-const provIcon = (a) => `<span class="prov prov-${a.provider}">${a.provider === 'google' ? 'G' : a.provider === 'notion' ? 'N' : icon('i-calendar')}</span>`;
+const provIcon = (a) => `<span class="prov prov-${a.provider}">${provLetter(a.provider)}</span>`;
 
 function viewAccounts() {
   const accs = data.accounts || [];
@@ -654,7 +739,7 @@ function viewAccounts() {
   <div style="max-width:880px">
     <div class="eyebrow">Tutti i tuoi calendari, in un posto</div>
     <h1 class="large-title">Account collegati</h1>
-    <div class="subtitle">Gli eventi arrivano in Trama e, dove il servizio lo permette, quelli che crei o modifichi qui tornano indietro. La sincronizzazione avviene all'avvio e ogni ${data.settings.syncMinutes || 15} minuti.</div>
+    <div class="subtitle">Gli eventi arrivano in Promemo e, dove il servizio lo permette, quelli che crei o modifichi qui tornano indietro. La sincronizzazione avviene all'avvio e ogni ${data.settings.syncMinutes || 15} minuti.</div>
 
     ${accs.length ? `<div class="stack" style="margin-top:22px">${accs.map(a => `
       <div class="card acc">
@@ -679,9 +764,10 @@ function viewAccounts() {
             </label>`).join('')}
         </div>
         <div class="acc-groups">
-          <div class="row"><span class="tiny grow">Gruppi e colori${a.provider === 'notion' ? (a.config.colorProp ? ` · da colonna “${esc(a.config.colorProp)}”` : '') : a.provider === 'google' ? ' · uno per calendario' : ' · dalle categorie del calendario'}</span>${a.provider === 'notion' ? `<button class="link" data-action="notion-color" data-id="${a.id}">${a.config.colorProp ? 'Cambia colonna' : 'Colora per colonna'}</button>` : ''}</div>
+          <div class="row"><span class="tiny grow">Gruppi e colori${a.provider === 'notion' ? (a.config.colorProp ? ` · da colonna “${esc(a.config.colorProp)}”` : '') : a.provider === 'google' ? ' · uno per calendario' : a.provider === 'calendly' ? ' · uno per tipo di appuntamento' : ' · dalle categorie del calendario'}</span>${a.provider === 'notion' ? `<button class="link" data-action="notion-color" data-id="${a.id}">${a.config.colorProp ? 'Cambia colonna' : 'Colora per colonna'}</button>` : ''}</div>
           <div class="grp-chips">${(a.groups || []).map(g => `<button class="pill grp-chip" data-action="grp-color" data-type="acc" data-acc="${a.id}" data-gid="${esc(g.id)}"><i style="background:${esc(g.color)}"></i>${esc(g.name || a.name)}</button>`).join('')}</div>
         </div>
+        ${a.provider === 'calendly' ? `<label class="row acc-foot"><span class="muted grow">Nascondi le copie che Calendly scrive in Google o negli altri calendari</span><input type="checkbox" class="switch" data-acc-dedupe="${a.id}" ${a.config?.dedupe !== false ? 'checked' : ''}></label>` : ''}
         <div class="row acc-foot">
           <span class="muted grow">Promemoria predefinito per gli eventi importati</span>
           <select class="select-chip" data-acc-rem="${a.id}">${REMINDERS.map(([v, l]) => `<option value="${v === null ? '' : v}" ${a.defaultReminder === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -692,6 +778,7 @@ function viewAccounts() {
     <div class="prov-grid">
       <button class="card clickable prov-tile" data-action="add-google">${provIcon({ provider: 'google' })}<b>Google Calendar</b><span>Il calendario del tuo account Gmail. Lettura e scrittura.</span></button>
       <button class="card clickable prov-tile" data-action="add-notion">${provIcon({ provider: 'notion' })}<b>Notion</b><span>Un database con una proprietà data. Lettura e scrittura.</span></button>
+      <button class="card clickable prov-tile" data-action="add-calendly">${provIcon({ provider: 'calendly' })}<b>Calendly</b><span>Le prenotazioni ricevute, con nome, email e risposte di chi prenota. Sola lettura.</span></button>
       <button class="card clickable prov-tile" data-action="add-ics">${provIcon({ provider: 'ics' })}<b>Calendario da link</b><span>iCloud, Outlook, Nextcloud, Proton, orari universitari… (.ics, sola lettura)</span></button>
     </div>
   </div>`;
@@ -710,9 +797,9 @@ function modalGoogle() {
     <h2>${provIcon({ provider: 'google' })} Collega Google Calendar</h2>
     <p class="muted" style="margin-top:-6px">Google richiede che ogni app desktop abbia le proprie credenziali. Si creano una volta sola, gratis, in circa 5 minuti:</p>
     <ol class="howto">
-      <li>Apri <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/projectcreate">Google Cloud Console</a> e crea un progetto (es. “Trama”).</li>
+      <li>Apri <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/projectcreate">Google Cloud Console</a> e crea un progetto (es. “Promemo”).</li>
       <li>In <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com">API e servizi → Libreria</a> abilita <b>Google Calendar API</b>.</li>
-      <li>In <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/auth/overview">Google Auth Platform</a> configura l'app come <b>Esterna</b>, poi in <i>Pubblico</i> premi <b>Pubblica app</b> (in modalità “test” Google scollega l'account ogni 7 giorni). Al primo accesso vedrai “app non verificata”: è la tua, scegli <i>Avanzate → Vai a Trama</i>.</li>
+      <li>In <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/auth/overview">Google Auth Platform</a> configura l'app come <b>Esterna</b>, poi in <i>Pubblico</i> premi <b>Pubblica app</b> (in modalità “test” Google scollega l'account ogni 7 giorni). Al primo accesso vedrai “app non verificata”: è la tua, scegli <i>Avanzate → Vai a Promemo</i>.</li>
       <li>In <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/auth/clients">Client</a> → <b>Crea client</b> → tipo <b>App desktop</b>. Copia ID client e client secret qui sotto.</li>
     </ol>
     <form class="form" data-submit="connect-google">
@@ -740,6 +827,22 @@ function modalNotion() {
     </form>`);
 }
 
+function modalCalendly() {
+  openModal(`
+    <h2>${provIcon({ provider: 'calendly' })} Collega Calendly</h2>
+    <p class="muted" style="margin-top:-6px">Le prenotazioni arrivano con il nome di chi prenota, l'email, le risposte al modulo e i link per spostare o annullare. Funziona anche con il piano gratuito.</p>
+    <ol class="howto">
+      <li>Accedi a Calendly con l'account delle ripetizioni e apri <a href="#" data-action="open-url" data-url="https://calendly.com/integrations/api_webhooks">Integrazioni → API e webhook</a>.</li>
+      <li>In <b>Token di accesso personali</b> premi <b>Genera nuovo token</b>, dagli un nome (es. “Promemo”) e copialo: Calendly lo mostra una sola volta.</li>
+    </ol>
+    <form class="form" data-submit="connect-calendly">
+      <label class="field"><span>Token di accesso personale</span><input name="token" type="password" required placeholder="eyJraWQiOi…" spellcheck="false"></label>
+      <label class="switch-row" style="border:0;padding:4px 0"><div>Nascondi i doppioni<small>Calendly copia ogni prenotazione nel calendario collegato (Google, Outlook…): mostro solo quella di Calendly</small></div><input type="checkbox" class="switch" name="dedupe" checked></label>
+      <div class="form-err" hidden></div>
+      <div class="modal-actions"><button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">Collega Calendly</button></div>
+    </form>`);
+}
+
 function modalIcs() {
   openModal(`
     <h2>${provIcon({ provider: 'ics' })} Calendario da link</h2>
@@ -761,6 +864,50 @@ function modalIcs() {
       const g = m.querySelector('[data-pick]');
       g.addEventListener('click', (ev) => { const b = ev.target.closest('button[data-v]'); if (!b) return; g.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); m.querySelector('[name=color]').value = b.dataset.v; });
     });
+}
+
+// ---------- Palette comandi ----------
+function openPalette() {
+  closePopover(true);
+  openModal(`<div class="palette"><label class="pal-input">${icon('i-search')}<input id="pal-q" placeholder="Cerca o scrivi un comando…" autocomplete="off" spellcheck="false"><kbd>Esc</kbd></label><div class="pal-list" id="pal-list"></div></div>`, (m) => {
+    m.classList.add('modal-palette');
+    const q = m.querySelector('#pal-q'), list = m.querySelector('#pal-list');
+    let items = [], idx = 0;
+    const cmds = [
+      { t: 'Nuovo appuntamento', i: 'i-calendar', k: 'evento crea', run: () => modalEvent(null, {}) },
+      { t: 'Nuovo progetto', i: 'i-folder', k: 'crea', run: () => modalProject() },
+      { t: 'Nuovo promemoria', i: 'i-bell', k: 'passo crea', run: () => modalStep(null) },
+      { t: 'Vai a Home', i: 'i-home', k: 'apri', run: () => go('home') },
+      { t: 'Vai a Progetti', i: 'i-folder', k: 'apri', run: () => go('progetti') },
+      { t: 'Vai ad Agenda', i: 'i-calendar', k: 'apri calendario', run: () => go('agenda') },
+      { t: 'Vai a Promemoria', i: 'i-bell', k: 'apri', run: () => go('promemoria') },
+      { t: 'Account collegati', i: 'i-sync', k: 'google notion calendly', run: () => go('account') },
+      { t: 'Sincronizza ora', i: 'i-sync', k: 'aggiorna', run: () => actions['sync-now']() },
+      { t: 'Impostazioni', i: 'i-gear', k: 'tema scuro chiaro', run: () => modalSettings() },
+    ];
+    const draw = () => {
+      const v = q.value.trim().toLowerCase();
+      const has = (x) => (x || '').toLowerCase().includes(v);
+      const c = cmds.filter(x => !v || has(x.t) || has(x.k)).map(x => ({ ...x, sec: 'Azioni' }));
+      const ps = v ? data.projects.filter(p => has(p.title) || p.steps.some(st => has(st.text))).slice(0, 5).map(p => ({ t: p.title, i: 'i-folder', sub: nextStep(p)?.text || '', sec: 'Progetti', run: () => go('progetti', { projectId: p.id, projFilter: p.status === 'archiviato' ? 'archivio' : 'attivi', catFilter: null }) })) : [];
+      const now = new Date();
+      const es = v ? data.events.filter(e => has(e.title) || has(e.location)).sort((a, b) => Math.abs(parse(a.start) - now) - Math.abs(parse(b.start) - now)).slice(0, 6).map(e => ({ t: e.title, i: 'i-calendar', color: groupInfo(e).color, sub: `${relDay(parse(e.start))}${e.allDay ? '' : ' · ' + fmtHM(parse(e.start))}`, sec: 'Eventi', run: () => modalEvent(e) })) : [];
+      items = [...es, ...ps, ...c];
+      idx = Math.min(idx, Math.max(0, items.length - 1));
+      let last = '';
+      list.innerHTML = items.map((x, n) => { const head = x.sec !== last ? `<div class="pal-sec">${x.sec}</div>` : ''; last = x.sec; return `${head}<button class="pal-item ${n === idx ? 'on' : ''}" data-n="${n}">${x.color ? `<i class="pal-dot" style="background:${esc(x.color)}"></i>` : icon(x.i)}<span class="grow">${esc(x.t)}</span>${x.sub ? `<span class="tiny">${esc(x.sub)}</span>` : ''}</button>`; }).join('') || '<div class="empty" style="margin:10px">Nessun risultato</div>';
+      list.querySelector('.pal-item.on')?.scrollIntoView({ block: 'nearest' });
+    };
+    const runIt = (n) => { const x = items[n]; if (!x) return; closeModal(); setTimeout(() => x.run(), 10); };
+    q.addEventListener('input', () => { idx = 0; draw(); });
+    q.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); idx = Math.min(idx + 1, items.length - 1); draw(); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); idx = Math.max(idx - 1, 0); draw(); }
+      if (e.key === 'Enter') { e.preventDefault(); runIt(idx); }
+    });
+    list.addEventListener('click', (e) => { const b = e.target.closest('.pal-item'); if (b) runIt(+b.dataset.n); });
+    draw();
+  });
 }
 
 function viewSearch() {
@@ -806,7 +953,7 @@ function openModal(html, onMount) {
   const f = $('#modal').querySelector('input:not([type=checkbox]),textarea');
   f && setTimeout(() => f.focus(), 30);
 }
-function closeModal() { $('#modal-backdrop').hidden = true; $('#modal').innerHTML = ''; }
+function closeModal() { $('#modal-backdrop').hidden = true; $('#modal').innerHTML = ''; $('#modal').classList.remove('modal-palette'); }
 
 const remSelect = (val, name = 'reminder') =>
   `<select name="${name}">${REMINDERS.map(([v, l]) => `<option value="${v === null ? '' : v}" ${val === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
@@ -850,10 +997,10 @@ function calendarSelect(ev) {
   const accs = (data.accounts || []).filter(a => a.enabled);
   if (ev && ev.source) {
     const a = accOf(ev), c = calOf(ev);
-    return `<select name="calendar" disabled><option>${a ? `${PROV[a.provider]} · ${esc(c ? c.name : a.name)}` : 'Trama'}</option></select>`;
+    return `<select name="calendar" disabled><option>${a ? `${PROV[a.provider]} · ${esc(c ? c.name : a.name)}` : 'Promemo'}</option></select>`;
   }
   const sel = ev && ev.pushTo ? `${ev.pushTo.acc}|${ev.pushTo.cal}` : (ev ? '' : data.settings.defaultCalendar || '');
-  let opts = `<option value="">Trama · solo su questo computer</option>`;
+  let opts = `<option value="">Promemo · solo su questo computer</option>`;
   for (const a of accs) for (const c of a.calendars.filter(c => c.writable && c.enabled)) {
     const v = `${a.id}|${c.id}`;
     opts += `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${PROV[a.provider]} · ${esc(c.name)}</option>`;
@@ -897,7 +1044,7 @@ function eventFormHTML(ev, preset = {}, compact = false) {
         : `<label class="field"><span>Note</span><textarea name="notes" rows="3" placeholder="Facoltative" ${dis}>${esc(e0.notes)}</textarea></label>`}
       <div class="modal-actions">
         ${!isNew ? `<button type="button" class="btn danger left" data-action="del-event" data-id="${ev.id}">${icon('i-trash')} Elimina</button>` : ''}
-        ${ev && ev.source && ev.source.url ? `<button type="button" class="btn ${isNew ? 'left' : ''}" data-action="open-url" data-url="${esc(ev.source.url)}">Apri in ${a.provider === 'google' ? 'Google' : 'Notion'}</button>` : ''}
+        ${ev && ev.source && ev.source.url ? `<button type="button" class="btn ${isNew ? 'left' : ''}" data-action="open-url" data-url="${esc(ev.source.url)}">${a.provider === 'calendly' ? 'Sposta in Calendly' : 'Apri in ' + PROV[a.provider].replace(' Calendar', '')}</button>` : ''}
         <button type="button" class="btn" data-action="close-all">Annulla</button><button class="btn-primary">${isNew ? 'Aggiungi' : 'Salva'}</button>
       </div>
     </form>`;
@@ -1062,8 +1209,9 @@ function modalSettings() {
     <div class="field" style="margin-bottom:8px"><span>Aspetto</span>
       <div class="segmented" data-theme-pick>${[['auto', 'Automatico'], ['light', 'Chiaro'], ['dark', 'Scuro']].map(([k, l]) => `<button class="${s.theme === k ? 'on' : ''}" data-v="${k}">${l}</button>`).join('')}</div>
     </div>
+    <label class="switch-row"><div>Il tuo nome<small>Per il saluto nella Home</small></div><input class="select-chip name-in" data-name-in value="${esc(s.userName || '')}" placeholder="Es. Daniele"></label>
     <label class="switch-row"><div>Notifiche desktop<small>Avvisi all'orario dei promemoria</small></div><input type="checkbox" class="switch" data-setting="notifications" ${s.notifications ? 'checked' : ''}></label>
-    <label class="switch-row"><div>Resta attiva nell'area di notifica<small>Chiudendo la finestra Trama continua a ricordarti gli impegni</small></div><input type="checkbox" class="switch" data-setting="closeToTray" ${s.closeToTray ? 'checked' : ''}></label>
+    <label class="switch-row"><div>Resta attiva nell'area di notifica<small>Chiudendo la finestra Promemo continua a ricordarti gli impegni</small></div><input type="checkbox" class="switch" data-setting="closeToTray" ${s.closeToTray ? 'checked' : ''}></label>
     <label class="switch-row"><div>Avvia all'accesso<small>Parte in background quando entri nel desktop</small></div><input type="checkbox" class="switch" data-setting="autostart" ${s.autostart ? 'checked' : ''}></label>
     <div class="switch-row"><div>Calendario per i nuovi eventi<small>Dove salvare di default ciò che crei</small></div>
       <select class="select-chip" data-def-cal>${calendarSelect(null).replace(/^<select name="calendar">|<\/select>$/g, '')}</select></div>
@@ -1075,6 +1223,7 @@ function modalSettings() {
         s.theme = b.dataset.v; applyTheme(); save();
         m.querySelectorAll('[data-theme-pick] button').forEach(x => x.classList.toggle('on', x === b));
       });
+      m.querySelector('[data-name-in]').addEventListener('input', (e) => { s.userName = e.target.value; save(); });
       m.querySelector('[data-def-cal]').addEventListener('change', (e) => { s.defaultCalendar = e.target.value; save(); });
       m.querySelectorAll('[data-setting]').forEach(inp => inp.addEventListener('change', () => { s[inp.dataset.setting] = inp.checked; save(); }));
     });
@@ -1172,9 +1321,10 @@ const actions = {
     closePopover(true); render(); openDayPopover(k);
   },
   'close-all': () => closeAll(),
+  palette: () => openPalette(),
   'grp-toggle': (el) => { const row = el.closest('.cal-row'); setGroup(el, { visible: row.classList.contains('off') }); },
   'grp-color': (el) => showColorPicker(el, currentGroupColor(el), (c) => setGroup(el, { color: c })),
-  'acc-collapse': (el) => { const k = el.dataset.key; collapsed[k] = !collapsed[k]; try { localStorage.setItem('trama.collapsed', JSON.stringify(collapsed)); } catch {} el.closest('.cal-acc').classList.toggle('collapsed', !!collapsed[k]); },
+  'acc-collapse': (el) => { const k = el.dataset.key; collapsed[k] = !collapsed[k]; try { localStorage.setItem('promemo.collapsed', JSON.stringify(collapsed)); } catch {} el.closest('.cal-acc').classList.toggle('collapsed', !!collapsed[k]); },
   'notion-color': (el) => modalNotionColor(el.dataset.id),
   'open-url': (el) => api.openUrl(el.dataset.url),
   'sync-now': async () => { const r = await api.syncNow(); if (!r.ok) toast(r.error); },
@@ -1193,6 +1343,7 @@ const actions = {
   'add-google': () => modalGoogle(),
   'add-notion': () => modalNotion(),
   'add-ics': () => modalIcs(),
+  'add-calendly': () => modalCalendly(),
   'acc-sync': async (el) => { const r = await api.syncNow(el.dataset.id); if (!r.ok) toast(r.error); },
   'acc-menu': (el) => {
     const a = data.accounts.find(x => x.id === el.dataset.id);
@@ -1245,6 +1396,13 @@ const submits = {
       <label class="field"><span>Colori da (Seleziona / Stato)</span><select name="colorProp">${opt(of(['select', 'multi_select', 'status']), 'Nessuna, un solo colore')}</select></label>`;
     f.querySelectorAll('[name=token],[name=database]').forEach(i => i.readOnly = true);
     f.querySelector('.btn-primary').textContent = 'Collega database';
+  },
+  'connect-calendly': async (f, fd) => {
+    showErr(f); setBusy(f, true, 'Verifica…');
+    const r = await api.calendly({ token: fd.get('token').trim(), dedupe: fd.get('dedupe') === 'on' });
+    setBusy(f, false);
+    if (!r.ok) return showErr(f, r.error);
+    closeModal(); go('account'); toast('Calendly collegato');
   },
   'connect-ics': async (f, fd) => {
     showErr(f); setBusy(f, true, 'Scarico il calendario…');
@@ -1346,6 +1504,7 @@ document.addEventListener('submit', (e) => {
 });
 document.addEventListener('change', async (e) => {
   const t = e.target;
+  if (t.dataset.accDedupe) { await api.updateAccount({ id: t.dataset.accDedupe, patch: { dedupe: t.checked } }); return; }
   if (t.dataset.accToggle) { await api.updateAccount({ id: t.dataset.accToggle, patch: { enabled: t.checked } }); return; }
   if (t.dataset.calToggle) { await api.updateAccount({ id: t.dataset.calToggle, patch: { calendars: [{ id: t.dataset.cal, enabled: t.checked }] } }); return; }
   if ('accRem' in t.dataset) { await api.updateAccount({ id: t.dataset.accRem, patch: { defaultReminder: t.value === '' ? null : Number(t.value) } }); return; }
@@ -1373,6 +1532,7 @@ document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); modalNew(); }
   if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); $('#global-search').focus(); }
+  if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
   if (mod && ['1', '2', '3', '4', '5'].includes(e.key)) { e.preventDefault(); go(['home', 'progetti', 'agenda', 'promemoria', 'account'][+e.key - 1]); }
 });
 $('#modal-backdrop').addEventListener('mousedown', (e) => { if (e.target.id === 'modal-backdrop') closeModal(); });

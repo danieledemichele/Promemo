@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('trama', {
+contextBridge.exposeInMainWorld('promemo', {
   getData: () => ipcRenderer.invoke('data:get'),
   setData: (d) => ipcRenderer.invoke('data:set', d),
   exportData: () => ipcRenderer.invoke('data:export'),
@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('trama', {
   notionInspect: (a) => ipcRenderer.invoke('acc:notion-inspect', a),
   notion: (a) => ipcRenderer.invoke('acc:notion', a),
   ics: (a) => ipcRenderer.invoke('acc:ics', a),
+  calendly: (a) => ipcRenderer.invoke('acc:calendly', a),
   notionProps: (id) => ipcRenderer.invoke('acc:notion-props', id),
   notionColor: (a) => ipcRenderer.invoke('acc:notion-color', a),
   syncNow: (id) => ipcRenderer.invoke('acc:sync', id),

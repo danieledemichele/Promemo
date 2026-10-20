@@ -1,4 +1,4 @@
-# Trama
+# Promemo
 
 App desktop per Linux (Electron) per ricordare impegni e ciò che hai pianificato.
 Stile ispirato a macOS, dati salvati sul tuo computer, sincronizzazione con Google Calendar, Notion e calendari .ics.
@@ -10,9 +10,10 @@ Stile ispirato a macOS, dati salvati sul tuo computer, sincronizzazione con Goog
 | ![Agenda](docs/agenda.png) | ![Popup](docs/popup-giorno.png) | ![Colori](docs/colori.png) |
 
 ## Sezioni
-- **Home**: impegni di oggi, progetti da riprendere, prossimi 7 giorni, raccolte.
+- **Home**: riepilogo a riquadri (prossimo impegno con conto alla rovescia, oggi, in ritardo, settimana), linea del tempo di oggi con l'indicatore “adesso”, in arrivo e progetti da riprendere.
+- **Palette comandi** (Ctrl+K): cerca eventi e progetti, crea, naviga.
 - **Progetti**: prossimo passo, passi con scadenza, appuntamenti collegati, timeline di tracce.
-- **Agenda**: calendario mensile. **Un clic su un giorno apre il popup animato** con gli impegni del giorno e il modulo completo per un nuovo evento (titolo, tipo, giornata intera, inizio/fine, luogo, promemoria, progetto, calendario di destinazione, note).
+- **Agenda**: mese a tutta pagina con i titoli degli impegni nei giorni, colonna del giorno selezionato. **Un clic su un giorno apre il popup animato** con gli impegni del giorno e il modulo completo per un nuovo evento (titolo, tipo, giornata intera, inizio/fine, luogo, promemoria, progetto, calendario di destinazione, note).
 - **Promemoria**: tutto ciò che ha un avviso, con notifiche desktop.
 - **Account collegati**: Google Calendar, Notion, calendari da link.
 
@@ -30,13 +31,15 @@ Clic sul quadratino = mostra/nascondi. Icona tavolozza = scegli il colore: 9 fam
 |---|---|---|
 | Google Calendar (Gmail) | lettura e scrittura | un ID client OAuth di tipo *App desktop* (istruzioni nell'app) |
 | Notion | lettura e scrittura | token di un'integrazione interna + database con una proprietà Data condiviso con l'integrazione |
+| Calendly | sola lettura | un token di accesso personale (funziona anche con il piano gratuito) |
 | Link .ics / webcal (iCloud, Outlook, Nextcloud, Proton, orari corsi…) | sola lettura | l'indirizzo iCal pubblico o segreto |
 
+- **Calendly**: ogni prenotazione arriva con nome ed email di chi prenota, risposte al modulo, luogo o link della videochiamata e link per spostare/annullare. I tipi di appuntamento (es. *Ripetizione 60 min*) diventano gruppi colore. Le copie che Calendly scrive nel calendario Google collegato vengono nascoste per evitare doppioni (disattivabile).
 - Avviene all'avvio, ogni 15 minuti, al risveglio del PC e con il pulsante ⟳ in alto.
-- Gli eventi creati in Trama possono andare su Google o Notion (campo *Calendario*); modifiche ed eliminazioni vengono inviate al servizio.
-- Gli eventi importati restano collegabili a un progetto e possono avere un promemoria di Trama.
+- Gli eventi creati in Promemo possono andare su Google o Notion (campo *Calendario*); modifiche ed eliminazioni vengono inviate al servizio.
+- Gli eventi importati restano collegabili a un progetto e possono avere un promemoria di Promemo.
 - Finestra sincronizzata: da 60 giorni fa a circa 13 mesi avanti.
-- Token e credenziali sono in `~/.config/Trama/credenziali.bin`, cifrati con il portachiavi di sistema (GNOME Keyring/KWallet) quando disponibile.
+- Token e credenziali sono in `~/.config/Promemo/credenziali.bin`, cifrati con il portachiavi di sistema (GNOME Keyring/KWallet) quando disponibile.
 
 ## Avvio (sviluppo)
 ```bash
@@ -46,15 +49,15 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Trama-1.2.0.AppImage e dist/trama_1.2.0_amd64.deb
-sudo apt install ./dist/trama_1.2.0_amd64.deb
+npm run dist        # dist/Promemo-1.3.0.AppImage e dist/trama_1.3.0_amd64.deb
+sudo apt install ./dist/trama_1.3.0_amd64.deb
 ```
 
 ## Scorciatoie
-Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni · Esc chiude popup e finestre.
+Ctrl+K palette comandi · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni · Esc chiude popup e finestre.
 
 ## Dati
-`~/.config/Trama/trama.json` (scrittura atomica). Backup da *Impostazioni → Esporta*.
+`~/.config/Promemo/promemo.json` (scrittura atomica). Backup da *Impostazioni → Esporta*.
 
 ## Cambiare nome
 ```bash

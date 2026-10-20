@@ -1,4 +1,4 @@
-// Trama — sincronizzazione con Google Calendar, Notion e calendari .ics
+// Promemo — sincronizzazione con Google Calendar, Notion e calendari .ics
 'use strict';
 const http = require('http');
 const crypto = require('crypto');
@@ -9,6 +9,7 @@ const GAUTH = process.env.TRAMA_GOOGLE_AUTH || 'https://accounts.google.com/o/oa
 const GTOKEN = process.env.TRAMA_GOOGLE_TOKEN || 'https://oauth2.googleapis.com/token';
 const NAPI = process.env.TRAMA_NOTION_API || 'https://api.notion.com';
 const NVER = '2022-06-28';
+const CAPI = process.env.TRAMA_CALENDLY_API || 'https://api.calendly.com';
 const GSCOPE = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events';
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -37,7 +38,7 @@ async function readJson(res) {
   try { return t ? JSON.parse(t) : null; } catch { return { raw: t }; }
 }
 
-// Colori delle opzioni Notion → tavolozza di Trama
+// Colori delle opzioni Notion → tavolozza di Promemo
 const NOTION_COLORS = { default: '#8e8e93', gray: '#8e8e93', brown: '#a0785a', orange: '#f08a24', yellow: '#d9a50b', green: '#34a853', blue: '#0a84ff', purple: '#8e5bd9', pink: '#e0569b', red: '#e5484d' };
 const AUTO = ['#e5484d', '#0a84ff', '#34a853', '#f08a24', '#8e5bd9', '#5ac8fa', '#e0569b', '#d9a50b', '#1f9aa5', '#a0785a'];
 
@@ -96,7 +97,7 @@ function createSync(ctx) {
         if (u.pathname !== '/') { res.writeHead(404); return res.end(); }
         const ok = u.searchParams.get('state') === state && u.searchParams.get('code');
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(`<!doctype html><meta charset="utf-8"><title>Trama</title><body style="font:16px system-ui;display:grid;place-items:center;height:90vh;color:#1d1d1f;background:#f5f4f1"><div style="text-align:center"><div style="font-size:42px">${ok ? '✓' : '✕'}</div><h2>${ok ? 'Account collegato' : 'Accesso non riuscito'}</h2><p>Puoi chiudere questa scheda e tornare a Trama.</p></div>`);
+        res.end(`<!doctype html><meta charset="utf-8"><title>Promemo</title><body style="font:16px system-ui;display:grid;place-items:center;height:90vh;color:#1d1d1f;background:#f5f4f1"><div style="text-align:center"><div style="font-size:42px">${ok ? '✓' : '✕'}</div><h2>${ok ? 'Account collegato' : 'Accesso non riuscito'}</h2><p>Puoi chiudere questa scheda e tornare a Promemo.</p></div>`);
         clearTimeout(timer); server.close();
         ok ? resolve(u.searchParams.get('code')) : reject(new Error(u.searchParams.get('error') === 'access_denied' ? 'Accesso negato.' : 'Risposta di Google non valida.'));
       });
@@ -148,6 +149,7 @@ function createSync(ctx) {
       const j = await gFetch(acc, `/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events?${q}`);
       for (const ev of j.items || []) {
         if (ev.status === 'cancelled' || !ev.start) continue;
+        if (skipCalendlyCopy((ev.description || '') + ' ' + (ev.location || ''))) continue;
         const s = gToLocal(ev.start, false), e = gToLocal(ev.end || ev.start, true);
         items.push({ rid: ev.id, title: ev.summary || '(senza titolo)', start: s.s, end: e.s, allDay: s.allDay, location: ev.location || '', notes: (ev.description || '').replace(/<[^>]+>/g, '').slice(0, 4000), url: ev.htmlLink || '', group: cal.id });
       }
@@ -320,6 +322,83 @@ function createSync(ctx) {
     return acc;
   }
 
+  // ---------------- Calendly (sola lettura) ----------------
+  // Calendly scrive anche nel calendario collegato (Google/Outlook): se Calendly è collegato
+  // direttamente, quelle copie vengono nascoste per non vedere ogni appuntamento due volte.
+  function skipCalendlyCopy(text) {
+    const on = (ctx.data().accounts || []).some(a => a.provider === 'calendly' && a.enabled && a.config?.dedupe !== false);
+    return on && /calendly\.com/i.test(text || '');
+  }
+
+  async function cFetch(token, path) {
+    const res = await fetch(path.startsWith('http') ? path : CAPI + path, { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } });
+    const j = await readJson(res);
+    if (res.status === 401) throw new Error('Token Calendly non valido o revocato (succede anche se cambi password o metodo di accesso): generane uno nuovo.');
+    if (!res.ok) throw new Error(`Calendly: ${j?.message || j?.title || res.status}`);
+    return j;
+  }
+
+  async function calendlyConnect({ token, dedupe }) {
+    if (!token) throw new Error('Incolla il token personale di Calendly.');
+    const me = await cFetch(token, '/users/me');
+    const u = me.resource;
+    const id = 'acc-' + uid();
+    ctx.setSecret(id, { token });
+    const acc = { id, provider: 'calendly', name: u.email || u.name || 'Calendly', enabled: true, defaultReminder: 60, user: u.uri,
+      calendars: [{ id: 'calendly', name: 'Calendly', color: '#1a73e8', enabled: true, writable: false }],
+      groups: [], config: { dedupe: dedupe !== false, link: u.scheduling_url || '' } };
+    const d = ctx.data(); d.accounts.push(acc); ctx.commit();
+    syncAll();
+    return acc;
+  }
+
+  function cLocation(l) {
+    if (!l) return '';
+    if (l.location) return l.location;
+    if (l.join_url) return 'Online · ' + l.join_url;
+    const T = { google_conference: 'Google Meet', zoom: 'Zoom', microsoft_teams_conference: 'Microsoft Teams', webex_conference: 'Webex', outbound_call: 'Telefonata', inbound_call: 'Telefonata', ask_invitee: 'Da definire' };
+    return T[l.type] || '';
+  }
+
+  const calendly = {
+    async pull(acc) {
+      const token = ctx.secret(acc.id)?.token;
+      const { from, to } = windowRange();
+      const known = new Map(ctx.data().events.filter(e => e.source && e.source.acc === acc.id && e.source.extra).map(e => [e.source.rid, e.source.extra]));
+      const items = [];
+      let url = '/scheduled_events?' + new URLSearchParams({ user: acc.user, min_start_time: from.toISOString(), max_start_time: to.toISOString(), status: 'active', count: '100', sort: 'start_time:asc' });
+      let guard = 0;
+      while (url && guard++ < 30) {
+        const j = await cFetch(token, url);
+        for (const ev of j.collection || []) {
+          const rid = ev.uri.split('/').pop();
+          let inv = known.get(rid);
+          if (!inv) {
+            try {
+              const ij = await cFetch(token, `/scheduled_events/${rid}/invitees?count=10&status=active`);
+              const list = (ij.collection || []).map(x => ({ name: x.name || '', email: x.email || '', qa: (x.questions_and_answers || []).map(q => `${q.question}: ${q.answer}`), cancel: x.cancel_url || '', reschedule: x.reschedule_url || '' }));
+              inv = { list };
+            } catch { inv = { list: [] }; }
+          }
+          const first = inv.list[0];
+          const who = inv.list.map(x => x.name).filter(Boolean).join(', ');
+          const notes = [
+            ...inv.list.map(x => `Con: ${x.name}${x.email ? ' <' + x.email + '>' : ''}${x.qa.length ? '\n' + x.qa.join('\n') : ''}`),
+            first && first.reschedule ? `Sposta: ${first.reschedule}` : '',
+            first && first.cancel ? `Annulla: ${first.cancel}` : '',
+          ].filter(Boolean).join('\n');
+          items.push({
+            rid, title: who ? `${ev.name} · ${who}` : ev.name,
+            start: localISO(new Date(ev.start_time)), end: localISO(new Date(ev.end_time)), allDay: false,
+            location: cLocation(ev.location), notes, url: first?.reschedule || '', group: ev.name, extra: inv,
+          });
+        }
+        url = j.pagination && j.pagination.next_page ? j.pagination.next_page : null;
+      }
+      return items;
+    },
+  };
+
   const ics = {
     async pull(acc) {
       const res = await fetch(acc.url);
@@ -328,11 +407,11 @@ function createSync(ctx) {
       return parseICS(await res.text(), from, to).map(o => ({
         rid: o.rid, title: o.title, start: localISO(o.start), end: o.allDay ? dayStr(o.end) + 'T23:59' : localISO(o.end),
         allDay: o.allDay, location: o.location, notes: o.notes, url: '', group: o.category || 'ics',
-      }));
+      })).filter(o => !skipCalendlyCopy(o.notes + ' ' + o.location));
     },
   };
 
-  const providers = { google, notion, ics };
+  const providers = { google, notion, ics, calendly };
 
   // ---------------- Unione dei dati ----------------
   function merge(accId, calId, items) {
@@ -359,9 +438,10 @@ function createSync(ctx) {
         if (e.start !== core.start || e.allDay !== core.allDay) delete e.notifiedAt;
         Object.assign(e, core);
         e.source.hash = coreHash(e); e.source.url = it.url;
+        if (it.extra) e.source.extra = it.extra;
       } else {
         const multi = it.start.slice(0, 10) !== it.end.slice(0, 10);
-        const ne = { id: 'e-' + uid(), kind: it.allDay && multi ? 'evento' : 'appuntamento', projectId: '', reminder: it.allDay ? null : (acc.defaultReminder ?? null), ...core, source: { acc: accId, cal: calId, rid: it.rid, url: it.url, rev, group: grp.id } };
+        const ne = { id: 'e-' + uid(), kind: it.allDay && multi ? 'evento' : 'appuntamento', projectId: '', reminder: it.allDay ? null : (acc.defaultReminder ?? null), ...core, source: { acc: accId, cal: calId, rid: it.rid, url: it.url, rev, group: grp.id, ...(it.extra ? { extra: it.extra } : {}) } };
         ne.source.hash = coreHash(ne);
         d.events.push(ne);
       }
@@ -480,7 +560,7 @@ function createSync(ctx) {
     return { data: incoming, needsPush: !!needsPush };
   }
 
-  return { syncAll, googleConnect, notionInspect, notionConnect, icsConnect, disconnect, reconcile, refreshGoogleCalendars, notionProps, setNotionColorProp, ensureGroup };
+  return { syncAll, googleConnect, notionInspect, notionConnect, icsConnect, disconnect, reconcile, refreshGoogleCalendars, calendlyConnect, notionProps, setNotionColorProp, ensureGroup };
 }
 
 module.exports = { createSync, coreHash };

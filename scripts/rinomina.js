@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Rinomina l'app in tutti i file del progetto.
 // Uso:  node scripts/rinomina.js Ordito
-// I dati già salvati vengono recuperati al primo avvio dalla vecchia cartella ~/.config/Trama.
+// I dati già salvati vengono recuperati al primo avvio dalla vecchia cartella la cartella dati del nome precedente.
 const fs = require('fs');
 const path = require('path');
 
