@@ -1,0 +1,27 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('trama', {
+  getData: () => ipcRenderer.invoke('data:get'),
+  setData: (d) => ipcRenderer.invoke('data:set', d),
+  exportData: () => ipcRenderer.invoke('data:export'),
+  importData: () => ipcRenderer.invoke('data:import'),
+  openFolder: () => ipcRenderer.invoke('data:folder'),
+  testNotification: () => ipcRenderer.send('notify:test'),
+  minimize: () => ipcRenderer.send('win:minimize'),
+  maximize: () => ipcRenderer.send('win:maximize'),
+  close: () => ipcRenderer.send('win:close'),
+  onDataChanged: (cb) => ipcRenderer.on('data-changed', (_e, d) => cb(d)),
+  onNavigate: (cb) => ipcRenderer.on('navigate', (_e, r) => cb(r)),
+  google: (a) => ipcRenderer.invoke('acc:google', a),
+  notionInspect: (a) => ipcRenderer.invoke('acc:notion-inspect', a),
+  notion: (a) => ipcRenderer.invoke('acc:notion', a),
+  ics: (a) => ipcRenderer.invoke('acc:ics', a),
+  notionProps: (id) => ipcRenderer.invoke('acc:notion-props', id),
+  notionColor: (a) => ipcRenderer.invoke('acc:notion-color', a),
+  syncNow: (id) => ipcRenderer.invoke('acc:sync', id),
+  removeAccount: (a) => ipcRenderer.invoke('acc:remove', a),
+  updateAccount: (a) => ipcRenderer.invoke('acc:update', a),
+  openUrl: (u) => ipcRenderer.send('open-url', u),
+  onSyncStatus: (cb) => ipcRenderer.on('sync-status', (_e, s) => cb(s)),
+  onMaximized: (cb) => ipcRenderer.on('maximized', (_e, v) => cb(v)),
+});

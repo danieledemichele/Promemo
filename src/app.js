@@ -1,0 +1,1404 @@
+/* Trama — interfaccia */
+'use strict';
+
+const api = window.trama;
+let data = null;
+const ui = {
+  view: 'home',
+  projectId: null,
+  projFilter: 'attivi',
+  catFilter: null,
+  month: null,          // Date del primo giorno del mese mostrato
+  sel: null,            // 'YYYY-MM-DD' selezionato in agenda
+  chips: { appuntamento: true, evento: true, passo: true },
+  search: '',
+};
+
+// ---------- Utilità ----------
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+const pad = (n) => String(n).padStart(2, '0');
+const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const dayKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parse = (s) => s ? new Date(s.length === 10 ? s + 'T00:00' : s) : null;
+const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const sameDay = (a, b) => dayKey(a) === dayKey(b);
+const MESI = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
+const fmtHM = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const fmtDM = (d) => `${d.getDate()} ${MESI[d.getMonth()]}`.toUpperCase();
+const fmtLong = (d) => d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+const fmtMonth = (d) => d.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+const icon = (id, cls = '') => `<svg class="${cls}" viewBox="0 0 24 24"><use href="#${id}"/></svg>`;
+
+function relDay(d) {
+  const diff = Math.round((startOfDay(d) - startOfDay(new Date())) / 86400000);
+  if (diff === 0) return 'Oggi';
+  if (diff === 1) return 'Domani';
+  if (diff === -1) return 'Ieri';
+  if (diff > 1 && diff < 7) return d.toLocaleDateString('it-IT', { weekday: 'long' }).replace(/^./, c => c.toUpperCase());
+  return d.toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
+}
+const stamp = (s) => { const d = parse(s); return `${relDay(d).toUpperCase()} · ${fmtHM(d)}`; };
+
+const REMINDERS = [
+  [null, 'Nessuno'], [0, "All'orario"], [5, '5 minuti prima'], [15, '15 minuti prima'],
+  [30, '30 minuti prima'], [60, '1 ora prima'], [120, '2 ore prima'], [1440, '1 giorno prima'],
+];
+const COLORS = ['orange', 'green', 'blue', 'purple', 'pink', 'teal', 'yellow', 'gray'];
+const CAT_ICONS = ['plane', 'home', 'book', 'briefcase', 'heart', 'dumbbell', 'money', 'cap', 'folder'];
+
+const cat = (id) => data.categories.find(c => c.id === id);
+const PROV = { google: 'Google Calendar', notion: 'Notion', ics: 'Calendario web' };
+const accOf = (e) => { const t = e.source || e.pushTo; return t ? (data.accounts || []).find(a => a.id === t.acc) : null; };
+const calOf = (e) => { const t = e.source || e.pushTo; const a = accOf(e); return a ? a.calendars.find(c => c.id === t.cal) : null; };
+const isReadOnly = (e) => { const c = calOf(e); return !!(e.source && c && !c.writable); };
+function srcPill(e) {
+  const a = accOf(e); if (!a) return '';
+  const c = calOf(e);
+  const label = a.provider === 'google' ? 'Google' : a.provider === 'notion' ? 'Notion' : esc(a.name);
+  const pending = e.pushTo || (e.source && !e.source.rid);
+  const g = groupInfo(e);
+  return `<span class="pill src" title="${esc(a.name)}${c ? ' · ' + esc(c.name) : ''}"><i style="background:${esc(g.color)}"></i>${pending ? 'Invio a ' + label : esc(g.name || label)}</span>`;
+}
+const proj = (id) => data.projects.find(p => p.id === id);
+const NAMED = { orange: '#e5562a', green: '#2f9e5b', blue: '#2f7ae5', purple: '#8e5bd9', pink: '#d9467a', teal: '#1f9aa5', yellow: '#c9930a', gray: '#8e8e93' };
+const hex = (c) => NAMED[c] || c || '#8e8e93';
+const catTag = (c) => c ? `<span class="cat-tag" style="color:${hex(c.color)}">${icon('c-' + c.icon)}${esc(c.name)}</span>` : '';
+// tavolozza a sfumature: una famiglia di colori per ogni ambito
+const SHADES = [
+  ['Rossi', ['#ff8787', '#e5484d', '#c92a2a', '#8f1d22']],
+  ['Arancio', ['#ffb366', '#f08a24', '#d9480f', '#a3410d']],
+  ['Gialli', ['#ffd43b', '#e8b10b', '#b88a00', '#8a6700']],
+  ['Verdi', ['#8ce99a', '#40c057', '#2b8a3e', '#1b5e2a']],
+  ['Turchesi', ['#66d9e8', '#22b8cf', '#1098ad', '#0b7285']],
+  ['Azzurri', ['#a5d8ff', '#5ac8fa', '#0a84ff', '#1c5fd4', '#173f8a']],
+  ['Viola', ['#d0bfff', '#9775fa', '#7048e8', '#4c2b9e']],
+  ['Rosa', ['#faa2c1', '#f06595', '#d6336c', '#a61e4d']],
+  ['Neutri', ['#ced4da', '#8e8e93', '#5c636a', '#343a40']],
+];
+const hiddenLocal = () => data.settings.hiddenLocal || [];
+function localGroup(p) {
+  const c = p && cat(p.category);
+  if (c) return { key: 'local::' + c.id, color: hex(c.color), name: c.name, visible: !hiddenLocal().includes(c.id) };
+  return { key: 'local::', color: data.settings.localColor || '#e5562a', name: 'Personale', visible: !hiddenLocal().includes('') };
+}
+function groupInfo(e) {
+  if (e.source) {
+    const a = (data.accounts || []).find(x => x.id === e.source.acc);
+    const g = a && (a.groups || []).find(x => x.id === e.source.group);
+    if (g) return { key: `${a.id}::${g.id}`, color: g.color, name: g.name, visible: g.visible !== false && a.enabled, acc: a };
+    const c = a && a.calendars.find(x => x.id === e.source.cal);
+    return { key: `${e.source.acc}::?`, color: c?.color || '#8e8e93', name: c?.name || '', visible: !a || a.enabled, acc: a };
+  }
+  return localGroup(proj(e.projectId));
+}
+
+function nextStep(p) {
+  const open = p.steps.filter(s => !s.done);
+  open.sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
+  return open[0] || null;
+}
+
+// ---------- Persistenza ----------
+let saveTimer = null, dirty = false;
+function save() {
+  dirty = true;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    dirty = false;
+    const r = await api.setData(data);
+    if (!dirty && r && r.rev) Object.assign(data, r); // rev, account ed eventi riconciliati dal processo principale
+  }, 150);
+}
+function touch(p) { p.updatedAt = iso(new Date()); }
+
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ---------- Elementi del calendario ----------
+// Restituisce gli elementi (appuntamenti, eventi, passi con scadenza) che cadono nel giorno d
+function itemsOn(d, filter = { appuntamento: true, evento: true, passo: true }) {
+  const k = dayKey(d);
+  const out = [];
+  for (const e of data.events) {
+    if (!filter[e.kind]) continue;
+    if (!groupInfo(e).visible) continue;
+    const s = dayKey(parse(e.start));
+    const en = dayKey(parse(e.end || e.start));
+    if (s <= k && k <= en) out.push({ type: e.kind, ev: e, sort: e.allDay ? '0' : e.start });
+  }
+  if (filter.passo) {
+    for (const p of data.projects) {
+      if (p.status === 'archiviato' || !localGroup(p).visible) continue;
+      for (const st of p.steps) {
+        if (st.due && dayKey(parse(st.due)) === k) out.push({ type: 'passo', step: st, project: p, sort: st.due });
+      }
+    }
+  }
+  out.sort((a, b) => a.sort.localeCompare(b.sort));
+  return out;
+}
+
+function spanDays(e) {
+  const a = startOfDay(parse(e.start)), b = startOfDay(parse(e.end || e.start));
+  return Math.round((b - a) / 86400000) + 1;
+}
+
+function eventCard(e, opts = {}) {
+  const s = parse(e.start), en = parse(e.end || e.start);
+  const now = new Date();
+  const live = s <= now && now <= en;
+  const days = spanDays(e);
+  const p = proj(e.projectId);
+  const c = p && cat(p.category);
+  const kindLabel = e.kind === 'evento' ? 'Evento' : 'Appuntamento';
+  const timeCol = e.allDay
+    ? `<div>${fmtDM(s)}</div><div>Tutto il giorno</div>${days > 1 ? `<div class="end">${fmtDM(en)}</div>` : ''}`
+    : `<div>${fmtDM(s)}</div><div>${fmtHM(s)}</div><div class="end">${days > 1 ? fmtDM(en) + '<br>' : ''}${fmtHM(en)}</div>`;
+  return `
+  <div class="card clickable accent-left ev kind-${e.kind} tinted" style="--gc:${esc(groupInfo(e).color)}" data-action="edit-event" data-id="${e.id}">
+    <div class="ev-time">${timeCol}</div>
+    <div style="min-width:0">
+      <div class="ev-kind">
+        ${live ? `<span class="pill live">In corso</span>` : `<span class="ev-kind-label">${kindLabel}</span>`}
+        ${days > 1 ? `<span class="pill">${icon('i-calendar')} ${days} giorni</span>` : ''}
+        ${e.reminder !== null && e.reminder !== undefined ? `<span class="pill">${icon('i-bell')} ${remShort(e.reminder)}</span>` : ''}
+        ${srcPill(e)}
+      </div>
+      <div class="card-title">${esc(e.title)}</div>
+      <div class="ev-lines">
+        ${p ? `<div class="card-sub">${icon('i-folder')} ${esc(p.title)}</div>` : ''}
+        ${c && opts.showCat ? `<div class="card-sub">${catTag(c)}</div>` : ''}
+        ${e.location ? `<div class="card-sub">${icon('i-pin')} ${esc(e.location)}</div>` : ''}
+      </div>
+    </div>
+    ${icon('i-chev-r', 'chev')}
+  </div>`;
+}
+const remShort = (m) => m === 0 ? "all'ora" : m < 60 ? `${m} min` : m < 1440 ? `${m / 60} h` : `${m / 1440} g`;
+
+function stepCard(st, p) {
+  const d = parse(st.due);
+  const late = !st.done && d < new Date();
+  return `
+  <div class="card clickable accent-left ev kind-passo tinted" style="--gc:${esc(localGroup(p).color)}" data-action="open-project" data-id="${p.id}">
+    <div class="ev-time"><div>${fmtDM(d)}</div><div>${fmtHM(d)}</div></div>
+    <div style="min-width:0">
+      <div class="ev-kind"><span class="ev-kind-label">Passo</span>${st.done ? '<span class="pill ok">Fatto</span>' : late ? '<span class="pill live">In ritardo</span>' : ''}</div>
+      <div class="card-title">${esc(st.text)}</div>
+      <div class="card-sub">${icon('i-folder')} ${esc(p.title)}</div>
+    </div>
+    ${icon('i-chev-r', 'chev')}
+  </div>`;
+}
+
+function projectCard(p, opts = {}) {
+  const c = cat(p.category);
+  const ns = nextStep(p);
+  const hasEv = data.events.some(e => e.projectId === p.id && parse(e.end || e.start) >= new Date());
+  const hasRem = p.steps.some(s => !s.done && s.reminder !== null && s.reminder !== undefined && s.due);
+  return `
+  <div class="card clickable accent-left proj-item ${opts.selected ? 'selected' : ''}" data-action="open-project" data-id="${p.id}">
+    <div class="row">
+      <div class="tiny grow">${stamp(p.updatedAt)}</div>
+      <div class="flags">
+        ${hasEv ? icon('i-calendar') : ''}${hasRem ? icon('i-bell') : ''}${p.starred ? icon('i-star', 'star') : ''}
+      </div>
+    </div>
+    <div class="card-title">${esc(p.title)}</div>
+    ${c ? `<div style="margin:1px 0 3px">${catTag(c)}</div>` : ''}
+    <div class="row">
+      <div class="card-sub grow">${ns ? `${icon('i-step')} ${esc(ns.text)}` : `<span style="color:var(--text-3)">Nessun passo aperto</span>`}</div>
+      ${icon('i-chev-r', 'chev')}
+    </div>
+  </div>`;
+}
+
+// ---------- Sidebar ----------
+function remindersList() {
+  const out = [];
+  const now = new Date();
+  for (const e of data.events) {
+    if (e.reminder === null || e.reminder === undefined) continue;
+    if (parse(e.end || e.start) < startOfDay(now) || !groupInfo(e).visible) continue;
+    out.push({ kind: 'ev', when: parse(e.start), title: e.title, sub: proj(e.projectId)?.title, ev: e });
+  }
+  for (const p of data.projects) {
+    if (p.status === 'archiviato') continue;
+    for (const s of p.steps) {
+      if (s.done || !s.due) continue;
+      if (s.reminder === null || s.reminder === undefined) { if (parse(s.due) >= now) continue; }
+      out.push({ kind: 'st', when: parse(s.due), title: s.text, sub: p.title, step: s, project: p });
+    }
+  }
+  out.sort((a, b) => a.when - b.when);
+  return out;
+}
+
+let collapsed = {};
+try { collapsed = JSON.parse(localStorage.getItem('trama.collapsed') || '{}'); } catch { collapsed = {}; }
+function calRow({ type, acc, gid, color, name, visible, count }) {
+  return `<div class="cal-row ${visible ? '' : 'off'}">
+    <button class="cal-check" style="--c:${esc(color)}" data-action="grp-toggle" data-type="${type}" data-acc="${esc(acc || '')}" data-gid="${esc(gid)}" title="${visible ? 'Nascondi' : 'Mostra'}">${icon('i-check')}</button>
+    <span class="cal-name">${esc(name)}</span>
+    ${count ? `<span class="count">${count}</span>` : ''}
+    <button class="cal-color" data-action="grp-color" data-type="${type}" data-acc="${esc(acc || '')}" data-gid="${esc(gid)}" title="Cambia colore">${icon('i-palette')}</button>
+  </div>`;
+}
+function renderSideCals() {
+  const now = new Date();
+  const upcoming = (pred) => data.events.filter(e => pred(e) && parse(e.end || e.start) >= startOfDay(now)).length;
+  const block = (key, head, rows, extra = '') => `
+    <div class="cal-acc ${collapsed[key] ? 'collapsed' : ''}">
+      <button class="cal-acc-head" data-action="acc-collapse" data-key="${esc(key)}">${icon('i-chev-r', 'cal-chev')}${head}</button>
+      <div class="cal-groups">${rows}${extra}</div>
+    </div>`;
+  let html = '';
+  // Trama, su questo computer
+  const lg = localGroup(null);
+  let rows = calRow({ type: 'local', gid: '', color: lg.color, name: 'Personale', visible: lg.visible, count: upcoming(e => !e.source && !proj(e.projectId)?.category) });
+  for (const c of data.categories) {
+    const g = localGroup({ category: c.id });
+    rows += calRow({ type: 'local', gid: c.id, color: g.color, name: c.name, visible: g.visible, count: upcoming(e => !e.source && proj(e.projectId)?.category === c.id) });
+  }
+  html += block('local', `<img src="../build/icon.png" class="cal-acc-icon" alt=""><span class="cal-acc-name">Su questo computer</span>`, rows);
+  for (const a of data.accounts || []) {
+    const groups = (a.groups || []).filter(g => a.provider === 'google' ? a.calendars.some(c => c.id === g.id && c.enabled) : (a.provider !== 'notion' || g.id !== '' || data.events.some(e => e.source && e.source.acc === a.id && e.source.group === '')));
+    const r = groups.map(g => calRow({ type: 'acc', acc: a.id, gid: g.id, color: g.color, name: g.name || a.name, visible: g.visible !== false, count: upcoming(e => e.source && e.source.acc === a.id && e.source.group === g.id) })).join('');
+    const hint = a.provider === 'notion' && !(a.config && a.config.colorProp)
+      ? `<button class="cal-hint" data-action="notion-color" data-id="${a.id}">${icon('i-palette')} Colora per colonna (es. Area)…</button>` : '';
+    html += block(a.id, `<span class="prov mini prov-${a.provider}">${a.provider === 'google' ? 'G' : a.provider === 'notion' ? 'N' : icon('i-calendar')}</span><span class="cal-acc-name">${esc(a.name)}</span>${a.error ? '<span class="cal-err" title="' + esc(a.error) + '"></span>' : ''}${a.enabled ? '' : '<span class="tiny">pausa</span>'}`, r || '<div class="cal-empty">Nessun evento</div>', hint);
+  }
+  $('#side-cals').innerHTML = html;
+}
+
+function showColorPicker(anchor, current, onPick) {
+  const layer = $('#popover-layer');
+  const r = anchor.getBoundingClientRect();
+  layer.innerHTML = `<div class="menu color-pop">
+    ${SHADES.map(([name, cs]) => `<div class="shade-row"><span class="tiny">${name}</span><div class="shade-sw">${cs.map(c => `<button style="background:${c}" class="${c.toLowerCase() === String(current).toLowerCase() ? 'on' : ''}" data-c="${c}" title="${c}"></button>`).join('')}</div></div>`).join('')}
+    <label class="shade-row custom"><span class="tiny">Personalizzato</span><input type="color" value="${esc(current && current.startsWith('#') && current.length === 7 ? current : '#0a84ff')}"></label>
+  </div>`;
+  const m = layer.firstChild;
+  m.style.top = Math.min(r.top - 10, window.innerHeight - m.offsetHeight - 12) + 'px';
+  m.style.left = (r.right + 10) + 'px';
+  const close = () => { layer.innerHTML = ''; document.removeEventListener('mousedown', outside, true); };
+  const outside = (e) => { if (!m.contains(e.target)) close(); };
+  setTimeout(() => document.addEventListener('mousedown', outside, true));
+  m.addEventListener('click', (e) => { const b = e.target.closest('[data-c]'); if (!b) return; close(); onPick(b.dataset.c); });
+  m.querySelector('input[type=color]').addEventListener('change', (e) => { close(); onPick(e.target.value); });
+}
+
+function currentGroupColor(el) {
+  const { type, acc, gid } = el.dataset;
+  if (type === 'local') return gid ? hex(cat(gid)?.color) : (data.settings.localColor || '#e5562a');
+  const a = data.accounts.find(x => x.id === acc);
+  return (a.groups || []).find(g => g.id === gid)?.color;
+}
+async function setGroup(el, patch) {
+  const { type, acc, gid } = el.dataset;
+  if (type === 'local') {
+    if ('color' in patch) { if (gid) cat(gid).color = patch.color; else data.settings.localColor = patch.color; }
+    if ('visible' in patch) {
+      const h = new Set(hiddenLocal());
+      patch.visible ? h.delete(gid) : h.add(gid);
+      data.settings.hiddenLocal = [...h];
+    }
+    save(); render(); return;
+  }
+  const a = data.accounts.find(x => x.id === acc);
+  const g = (a.groups || []).find(x => x.id === gid);
+  Object.assign(g, patch); render(); // aggiornamento immediato, poi conferma dal processo principale
+  await api.updateAccount({ id: acc, patch: { groups: [{ id: gid, ...patch }] } });
+}
+
+function modalNotionColor(accId) {
+  const a = data.accounts.find(x => x.id === accId);
+  openModal(`<h2>${provIcon(a)} Colori per “${esc(a.name)}”</h2>
+    <p class="muted" style="margin-top:-6px">Scegli una colonna <b>Seleziona</b>, <b>Selezione multipla</b> o <b>Stato</b> del database: ogni valore diventa un gruppo con il suo colore (es. Personale in rosso, Lavoro in azzurro, Università in blu scuro). I colori di partenza sono quelli di Notion: li puoi cambiare dalla barra laterale.</p>
+    <div class="form"><div class="field"><span>Colonna</span><select id="ncol" disabled><option>Carico le colonne…</option></select></div><div id="nprev" class="nprev"></div>
+    <div class="form-err" hidden></div></div>
+    <div class="modal-actions"><button class="btn" data-action="close-modal">Annulla</button><button class="btn-primary" id="nsave" disabled>Applica</button></div>`, async (m) => {
+      const r = await api.notionProps(accId);
+      const sel = m.querySelector('#ncol');
+      if (!r.ok) { const e = m.querySelector('.form-err'); e.textContent = r.error; e.hidden = false; return; }
+      const props = r.value.props.filter(p => ['select', 'multi_select', 'status'].includes(p.type));
+      const NC = { default: '#8e8e93', gray: '#8e8e93', brown: '#a0785a', orange: '#f08a24', yellow: '#d9a50b', green: '#34a853', blue: '#0a84ff', purple: '#8e5bd9', pink: '#e0569b', red: '#e5484d' };
+      sel.innerHTML = `<option value="">Nessuna (un solo colore)</option>` + props.map(p => `<option value="${esc(p.name)}" ${a.config.colorProp === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+      sel.disabled = false; m.querySelector('#nsave').disabled = false;
+      const prev = () => { const p = props.find(x => x.name === sel.value); m.querySelector('#nprev').innerHTML = p ? p.options.map(o => `<span class="pill"><i style="width:8px;height:8px;border-radius:4px;background:${NC[o.color] || '#8e8e93'}"></i>${esc(o.name)}</span>`).join('') : ''; };
+      sel.addEventListener('change', prev); prev();
+      m.querySelector('#nsave').addEventListener('click', async () => {
+        const b = m.querySelector('#nsave'); b.disabled = true; b.innerHTML = '<span class="spinner"></span> Applico…';
+        const res = await api.notionColor({ id: accId, prop: sel.value });
+        if (!res.ok) { const e = m.querySelector('.form-err'); e.textContent = res.error; e.hidden = false; b.disabled = false; b.textContent = 'Applica'; return; }
+        closeModal(); toast('Colori aggiornati');
+      });
+    });
+}
+
+function renderSidebar() {
+  renderSideCals();
+  const active = data.projects.filter(p => p.status !== 'archiviato').length;
+  const todayCount = itemsOn(new Date()).length;
+  const late = remindersList().filter(r => r.when < new Date() && r.kind === 'st').length;
+  const items = [
+    ['home', 'i-home', 'Home', todayCount ? `<span class="count">${todayCount}</span>` : ''],
+    ['progetti', 'i-folder', 'Progetti', `<span class="count">${active}</span>`],
+    ['agenda', 'i-calendar', 'Agenda', ''],
+    ['promemoria', 'i-bell', 'Promemoria', late ? `<span class="badge">${late}</span>` : ''],
+    ['account', 'i-sync', 'Account collegati', (data.accounts || []).some(a => a.error) ? `<span class="badge warn">!</span>` : (data.accounts || []).length ? `<span class="count">${data.accounts.length}</span>` : ''],
+  ];
+  $('#nav').innerHTML = items.map(([v, ic, label, extra]) =>
+    `<button class="nav-item ${ui.view === v && !ui.search ? 'active' : ''}" data-action="nav" data-view="${v}">${icon(ic)} ${label}${extra}</button>`).join('');
+
+  $('#side-cats').innerHTML = data.categories.map(c => {
+    const n = data.projects.filter(p => p.category === c.id && p.status !== 'archiviato').length;
+    return `<button class="cat-item" data-action="cat" data-id="${c.id}" style="${ui.view === 'progetti' && ui.catFilter === c.id ? 'background:var(--fill)' : ''}">
+      <span class="cat-dot" style="background:${hex(c.color)}">${icon('c-' + c.icon)}</span>${esc(c.name)}<span class="count">${n || ''}</span></button>`;
+  }).join('') + `<button class="cat-item" data-action="new-cat" style="color:var(--text-2)"><span class="cat-dot" style="background:var(--fill-2);color:var(--text-2)">${icon('i-plus')}</span>Nuova raccolta</button>`;
+}
+
+// ---------- Viste ----------
+function viewHome() {
+  const now = new Date();
+  const h = now.getHours();
+  const greet = h < 5 ? 'Buonanotte' : h < 13 ? 'Buongiorno' : h < 18 ? 'Buon pomeriggio' : 'Buonasera';
+  const today = itemsOn(now);
+  const resume = data.projects.filter(p => p.status === 'attivo').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const upcoming = [];
+  for (let i = 1; i <= 7 && upcoming.length < 4; i++) {
+    for (const it of itemsOn(addDays(now, i))) {
+      if (it.ev && spanDays(it.ev) > 1 && dayKey(parse(it.ev.start)) !== dayKey(addDays(now, i))) continue;
+      if (!upcoming.find(u => u.ev && it.ev && u.ev.id === it.ev.id)) upcoming.push(it);
+      if (upcoming.length >= 4) break;
+    }
+  }
+  const renderItem = (it) => it.ev ? eventCard(it.ev) : stepCard(it.step, it.project);
+
+  return `
+  <div class="eyebrow">${greet}</div>
+  <h1 class="large-title">Ecco come procede.</h1>
+  <div class="grid-2">
+    <div>
+      <div class="section-head"><h2>Oggi · ${fmtLong(now)}</h2><button class="link" data-action="goto-agenda" data-date="${dayKey(now)}">Vedi in agenda</button></div>
+      <div class="stack">
+        ${today.length ? today.map(renderItem).join('') : `<div class="empty"><b>Giornata libera</b>Nessun impegno per oggi.</div>`}
+      </div>
+      <div class="section-head"><h2>Da riprendere</h2><button class="link" data-action="nav" data-view="progetti">Vedi tutti (${resume.length})</button></div>
+      <div class="stack">
+        ${resume.length ? resume.slice(0, 4).map(p => projectCard(p)).join('') : `<div class="empty"><b>Nessun progetto attivo</b>Crea un progetto con il tasto “Nuovo”.</div>`}
+      </div>
+    </div>
+    <div>
+      <div class="section-head"><h2>Prossimi giorni</h2><button class="link" data-action="nav" data-view="agenda">Apri agenda</button></div>
+      <div class="stack">
+        ${upcoming.length ? upcoming.map(renderItem).join('') : `<div class="empty"><b>Settimana tranquilla</b>Niente in programma nei prossimi 7 giorni.</div>`}
+      </div>
+      <div class="section-head"><h2>Raccolte</h2><button class="link" data-action="new-cat">Nuova</button></div>
+      <div class="coll-grid">
+        ${data.categories.map(c => {
+          const ps = data.projects.filter(p => p.category === c.id && p.status !== 'archiviato');
+          const open = ps.reduce((n, p) => n + p.steps.filter(s => !s.done).length, 0);
+          return `<div class="card clickable coll" data-action="cat" data-id="${c.id}">
+            <span class="cat-dot" style="background:${hex(c.color)}">${icon('c-' + c.icon)}</span>
+            <div><div class="coll-name">${esc(c.name)}</div><div class="tiny">${ps.length} progett${ps.length === 1 ? 'o' : 'i'} · ${open} pass${open === 1 ? 'o' : 'i'}</div></div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function viewProjects() {
+  let list = data.projects.slice();
+  if (ui.projFilter === 'attivi') list = list.filter(p => p.status !== 'archiviato');
+  if (ui.projFilter === 'preferiti') list = list.filter(p => p.starred && p.status !== 'archiviato');
+  if (ui.projFilter === 'archivio') list = list.filter(p => p.status === 'archiviato');
+  if (ui.catFilter) list = list.filter(p => p.category === ui.catFilter);
+  list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  if (!ui.projectId || !list.find(p => p.id === ui.projectId)) ui.projectId = list[0]?.id || null;
+  const c = ui.catFilter && cat(ui.catFilter);
+
+  return `
+  <div class="split">
+    <div class="list-pane">
+      <div class="row" style="margin-bottom:6px">
+        <div class="grow">
+          <div class="eyebrow">${c ? 'Raccolta' : 'Archivio sul dispositivo'}</div>
+          <h1 class="large-title" style="font-size:26px">${c ? esc(c.name) : 'Progetti'}</h1>
+        </div>
+        ${c ? `<button class="icon-btn" data-action="edit-cat" data-id="${c.id}" title="Modifica raccolta">${icon('i-edit')}</button><button class="icon-btn" data-action="clear-cat" title="Tutte le raccolte">${icon('i-close')}</button>` : ''}
+      </div>
+      <div class="segmented" style="margin:8px 0 12px; align-self:flex-start">
+        ${[['attivi', 'Attivi'], ['preferiti', 'Preferiti'], ['archivio', 'Archivio']].map(([k, l]) =>
+          `<button class="${ui.projFilter === k ? 'on' : ''}" data-action="proj-filter" data-f="${k}">${l}</button>`).join('')}
+      </div>
+      <div class="list-scroll">
+        ${list.length ? list.map(p => projectCard(p, { selected: p.id === ui.projectId })).join('') : `<div class="empty"><b>Nessun progetto</b>${ui.projFilter === 'archivio' ? 'L’archivio è vuoto.' : 'Premi “Nuovo” per iniziare.'}</div>`}
+      </div>
+    </div>
+    <div class="detail-pane">${ui.projectId ? projectDetail(proj(ui.projectId)) : ''}</div>
+  </div>`;
+}
+
+function projectDetail(p) {
+  const ns = nextStep(p);
+  const evs = data.events.filter(e => e.projectId === p.id).sort((a, b) => a.start.localeCompare(b.start));
+  const steps = p.steps.slice().sort((a, b) => (a.done - b.done) || (a.due || '9999').localeCompare(b.due || '9999'));
+  const traces = p.traces.slice().sort((a, b) => b.at.localeCompare(a.at));
+  let lastDay = null;
+  const statusPill = p.status === 'attivo' ? '<span class="pill ok">Attivo</span>' : p.status === 'in pausa' ? '<span class="pill">In pausa</span>' : '<span class="pill">Archiviato</span>';
+
+  return `
+  <div class="detail-head">
+    <div class="grow" style="flex:1;min-width:0">
+      <div class="meta-row">
+        <button class="icon-btn" style="width:24px;height:24px;margin-left:-4px;color:${p.starred ? 'var(--accent)' : 'var(--text-3)'}" data-action="toggle-star" data-id="${p.id}" title="Preferito">${p.starred ? icon('i-star', 'star').replace('class="star"', 'class="star" style="fill:var(--accent)"') : icon('i-star')}</button>
+        <select class="select-chip" data-change="proj-cat" data-id="${p.id}">
+          <option value="">Senza raccolta</option>
+          ${data.categories.map(c => `<option value="${c.id}" ${c.id === p.category ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+        </select>
+        ${statusPill}
+        <span class="tiny">Aggiornato ${stamp(p.updatedAt).toLowerCase()}</span>
+      </div>
+      <h1 class="detail-title" contenteditable="plaintext-only" spellcheck="false" data-edit="proj-title" data-id="${p.id}">${esc(p.title)}</h1>
+      <div class="desc" contenteditable="plaintext-only" data-edit="proj-desc" data-id="${p.id}">${esc(p.description)}</div>
+    </div>
+    <button class="icon-btn round" data-action="proj-menu" data-id="${p.id}" title="Altre azioni">${icon('i-more')}</button>
+  </div>
+
+  <div class="detail-grid">
+    <div>
+      <div class="next-step">
+        <div class="label">Prossimo passo</div>
+        ${ns ? `
+          <div class="text">${esc(ns.text)}</div>
+          ${ns.due ? `<div><mark>${relDay(parse(ns.due))} · ${fmtHM(parse(ns.due))}</mark></div>` : '<div class="muted">Senza scadenza</div>'}
+          <div class="row" style="margin-top:14px">
+            <div class="grow tiny">${ns.reminder !== null && ns.reminder !== undefined ? `${icon('i-bell').replace('<svg', '<svg style="width:12px;height:12px;vertical-align:-2px"')} ${remShort(ns.reminder)}` : 'Nessun promemoria'}</div>
+            <button class="btn small" data-action="edit-step" data-pid="${p.id}" data-id="${ns.id}">Modifica</button>
+            <button class="btn-primary" style="height:26px;font-size:12.5px" data-action="complete-step" data-pid="${p.id}" data-id="${ns.id}">${icon('i-check')} Completa</button>
+          </div>` : `<div class="text muted" style="font-weight:500">Tutto fatto. Aggiungi il prossimo passo qui sotto.</div>`}
+      </div>
+
+      <div class="section-head"><h2>Passi (${p.steps.filter(s => !s.done).length})</h2></div>
+      <div class="card" style="padding:4px 14px 12px">
+        <div class="steps">
+          ${steps.map(s => {
+            const late = !s.done && s.due && parse(s.due) < new Date();
+            return `<div class="step ${s.done ? 'done' : ''}">
+              <button class="check ${s.done ? 'on' : ''}" data-action="toggle-step" data-pid="${p.id}" data-id="${s.id}">${icon('i-check')}</button>
+              <div class="step-text">${esc(s.text)}
+                ${s.due ? `<div class="step-meta ${late ? 'late' : ''}">${icon('i-clock')} ${relDay(parse(s.due))} · ${fmtHM(parse(s.due))}${s.reminder !== null && s.reminder !== undefined ? ` · ${icon('i-bell')} ${remShort(s.reminder)}` : ''}</div>` : ''}
+              </div>
+              <button class="icon-btn" data-action="edit-step" data-pid="${p.id}" data-id="${s.id}" title="Modifica">${icon('i-edit')}</button>
+              <button class="icon-btn" data-action="del-step" data-pid="${p.id}" data-id="${s.id}" title="Elimina">${icon('i-trash')}</button>
+            </div>`;
+          }).join('') || '<div class="muted" style="padding:10px 0 2px">Nessun passo.</div>'}
+        </div>
+        <form class="inline-add" data-submit="add-step" data-pid="${p.id}">
+          <input name="text" placeholder="Nuovo passo…  (Invio per aggiungere)" autocomplete="off">
+          <button class="btn small" type="button" data-action="new-step" data-pid="${p.id}" title="Con scadenza e promemoria">${icon('i-clock')}</button>
+        </form>
+      </div>
+
+      <div class="section-head"><h2>Appuntamenti ed eventi (${evs.length})</h2><button class="link" data-action="new-event" data-pid="${p.id}">Aggiungi</button></div>
+      <div class="stack">
+        ${evs.length ? evs.map(e => eventCard(e)).join('') : '<div class="empty">Nessun appuntamento collegato.</div>'}
+      </div>
+    </div>
+
+    <div>
+      <div class="section-head" style="margin-top:0"><h2>Timeline</h2><button class="link" data-action="new-trace" data-pid="${p.id}">Aggiungi traccia</button></div>
+      <div class="card" style="padding:16px 16px 4px">
+        ${traces.length ? `<div class="timeline">
+          ${traces.map(t => {
+            const d = parse(t.at);
+            const dk = dayKey(d);
+            const sep = dk !== lastDay ? `<div class="day-sep">${icon('i-calendar')}<span class="tiny">${relDay(d)}</span></div>` : '';
+            lastDay = dk;
+            return `${sep}<div class="trace">
+              <div class="tiny">Traccia · ${fmtHM(d)}</div>
+              <div class="trace-title">${esc(t.title)}</div>
+              ${t.body ? `<div class="trace-body">${esc(t.body)}</div>` : ''}
+              <button class="icon-btn" data-action="edit-trace" data-pid="${p.id}" data-id="${t.id}">${icon('i-edit')}</button>
+            </div>`;
+          }).join('')}
+        </div>` : '<div class="muted" style="padding:0 0 14px">Le tracce sono note datate: prenotazioni, decisioni, idee. Aggiungine una.</div>'}
+      </div>
+    </div>
+  </div>`;
+}
+
+function viewAgenda() {
+  const today = new Date();
+  if (!ui.month) ui.month = new Date(today.getFullYear(), today.getMonth(), 1);
+  if (!ui.sel) ui.sel = dayKey(today);
+  const m = ui.month;
+  const first = new Date(m.getFullYear(), m.getMonth(), 1);
+  const offset = (first.getDay() + 6) % 7; // lunedì = 0
+  const gridStart = addDays(first, -offset);
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = addDays(gridStart, i);
+    const its = itemsOn(d, ui.chips);
+    const cols = [...new Set(its.map(x => x.ev ? groupInfo(x.ev).color : localGroup(x.project).color))].slice(0, 4);
+    cells.push(`<button class="day ${d.getMonth() !== m.getMonth() ? 'other' : ''} ${sameDay(d, today) ? 'today' : ''} ${dayKey(d) === ui.sel ? 'sel' : ''}" data-action="sel-day" data-date="${dayKey(d)}">
+      <span class="num">${d.getDate()}</span>
+      <span class="marks">${cols.map(c => `<i style="background:${esc(c)}"></i>`).join('')}</span>
+    </button>`);
+  }
+  const selD = parse(ui.sel);
+  const its = itemsOn(selD, ui.chips);
+  const chip = (k, label, color) => `<button class="chip ${ui.chips[k] ? 'on' : ''}" data-action="chip" data-k="${k}"><span class="mark" style="background:${ui.chips[k] ? color : 'var(--text-3)'}"></span>${label}</button>`;
+
+  return `
+  <div class="agenda">
+    <div>
+      <div class="eyebrow">Tempo e continuità</div>
+      <h1 class="large-title" style="font-size:26px">Agenda</h1>
+      <div class="subtitle">Giorno per giorno, appuntamenti, eventi e passi dei tuoi progetti.</div>
+      <div class="chips">
+        ${chip('appuntamento', 'Appuntamenti', 'var(--text-2)')}
+        ${chip('evento', 'Eventi', 'var(--text-2)')}
+        ${chip('passo', 'Passi', 'var(--text-2)')}
+      </div>
+      <div class="cal">
+        <div class="cal-head">
+          <h3>${fmtMonth(m)}</h3>
+          <button class="btn small" data-action="cal-today">Oggi</button>
+          <button class="icon-btn" data-action="cal-prev">${icon('i-chev-l')}</button>
+          <button class="icon-btn" data-action="cal-next">${icon('i-chev-r')}</button>
+        </div>
+        <div class="cal-grid">
+          ${['L', 'M', 'M', 'G', 'V', 'S', 'D'].map(x => `<div class="dow">${x}</div>`).join('')}
+          ${cells.join('')}
+        </div>
+        <div class="cal-legend"><span>${icon('i-palette')} I colori seguono i calendari nella barra laterale</span></div>
+      </div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="row" style="margin-bottom:12px">
+        <h2 class="day-list-title grow" style="margin:0">${relDay(selD) === 'Oggi' || relDay(selD) === 'Domani' ? relDay(selD) + ' · ' : ''}${fmtLong(selD)} <span class="muted" style="font-weight:500">(${its.length})</span></h2>
+        <button class="btn small" data-action="new-event" data-date="${ui.sel}">${icon('i-plus')} Appuntamento</button>
+      </div>
+      <div class="stack">
+        ${its.length ? its.map(it => it.ev ? eventCard(it.ev, { showCat: true }) : stepCard(it.step, it.project)).join('') : `<div class="empty"><b>Niente in programma</b>Fai clic su un giorno del calendario per aggiungere un evento.</div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function viewReminders() {
+  const list = remindersList();
+  const now = new Date();
+  const t0 = startOfDay(now), t1 = addDays(t0, 1), t2 = addDays(t0, 2), t7 = addDays(t0, 7);
+  const groups = [
+    ['late', 'In ritardo', r => r.when < now && r.kind === 'st'],
+    ['', 'Oggi', r => r.when >= t0 && r.when < t1 && !(r.when < now && r.kind === 'st')],
+    ['', 'Domani', r => r.when >= t1 && r.when < t2],
+    ['', 'Prossimi 7 giorni', r => r.when >= t2 && r.when < t7],
+    ['', 'Più avanti', r => r.when >= t7],
+  ];
+  const row = (r) => {
+    const remTime = r.kind === 'ev' ? r.ev.reminder : r.step.reminder;
+    const action = r.kind === 'ev' ? `data-action="edit-event" data-id="${r.ev.id}"` : `data-action="open-project" data-id="${r.project.id}"`;
+    return `<div class="rem" ${action}>
+      ${r.kind === 'st' ? `<button class="check" data-action="complete-step" data-pid="${r.project.id}" data-id="${r.step.id}" title="Segna come fatto">${icon('i-check')}</button>` : `<span class="bell evb">${icon('i-calendar')}</span>`}
+      <div class="grow" style="min-width:0">
+        <div class="rem-title">${esc(r.title)}</div>
+        <div class="card-sub">${r.sub ? `${icon('i-folder')} ${esc(r.sub)}` : ''}${remTime !== null && remTime !== undefined ? ` &nbsp;${icon('i-bell')} ${remShort(remTime)}` : ''}</div>
+      </div>
+      <div class="rem-when"><b>${r.kind === 'ev' && r.ev.allDay ? 'Tutto il giorno' : fmtHM(r.when)}</b>${relDay(r.when)}</div>
+    </div>`;
+  };
+  const body = groups.map(([cls, title, f]) => {
+    const items = list.filter(f);
+    if (!items.length) return '';
+    return `<div class="rem-group ${cls}"><h3>${title} · ${items.length}</h3><div class="rem-list">${items.map(row).join('')}</div></div>`;
+  }).join('');
+
+  return `
+  <div style="max-width:820px">
+    <div class="eyebrow">Non perdere il filo</div>
+    <h1 class="large-title">Promemoria</h1>
+    <div class="subtitle">Riceverai una notifica sul desktop all'orario impostato, anche con la finestra chiusa (Trama resta nell'area di notifica).</div>
+    ${body || `<div class="empty" style="margin-top:24px"><b>Nessun promemoria</b>Aggiungi un promemoria a un passo o a un appuntamento.</div>`}
+  </div>`;
+}
+
+// ---------- Account collegati ----------
+let syncing = false;
+function renderSyncButton() {
+  const b = $('#btn-sync'); if (!b) return;
+  const accs = data.accounts || [];
+  b.hidden = !accs.length;
+  b.classList.toggle('spin', syncing);
+  const last = accs.map(a => a.lastSync).filter(Boolean).sort().pop();
+  b.title = syncing ? 'Sincronizzazione in corso…' : last ? `Sincronizza ora · ultima ${stamp(last).toLowerCase()}` : 'Sincronizza ora';
+  b.classList.toggle('err', accs.some(a => a.error));
+}
+
+const provIcon = (a) => `<span class="prov prov-${a.provider}">${a.provider === 'google' ? 'G' : a.provider === 'notion' ? 'N' : icon('i-calendar')}</span>`;
+
+function viewAccounts() {
+  const accs = data.accounts || [];
+  const count = (a) => data.events.filter(e => e.source && e.source.acc === a.id).length;
+  return `
+  <div style="max-width:880px">
+    <div class="eyebrow">Tutti i tuoi calendari, in un posto</div>
+    <h1 class="large-title">Account collegati</h1>
+    <div class="subtitle">Gli eventi arrivano in Trama e, dove il servizio lo permette, quelli che crei o modifichi qui tornano indietro. La sincronizzazione avviene all'avvio e ogni ${data.settings.syncMinutes || 15} minuti.</div>
+
+    ${accs.length ? `<div class="stack" style="margin-top:22px">${accs.map(a => `
+      <div class="card acc">
+        <div class="row">
+          ${provIcon(a)}
+          <div class="grow">
+            <div class="acc-name">${esc(a.name)}</div>
+            <div class="card-sub">${PROV[a.provider]} · ${count(a)} eventi · ${a.lastSync ? 'sincronizzato ' + stamp(a.lastSync).toLowerCase() : 'mai sincronizzato'}</div>
+          </div>
+          <label class="row" style="gap:8px;color:var(--text-2);font-size:12.5px">Attivo <input type="checkbox" class="switch" data-acc-toggle="${a.id}" ${a.enabled ? 'checked' : ''}></label>
+          <button class="btn small" data-action="acc-sync" data-id="${a.id}" ${syncing ? 'disabled' : ''}>${icon('i-sync')} Sincronizza</button>
+          <button class="icon-btn" data-action="acc-menu" data-id="${a.id}">${icon('i-more')}</button>
+        </div>
+        ${a.error ? `<div class="acc-err">${icon('i-close')} ${esc(a.error)}</div>` : ''}
+        <div class="acc-cals">
+          ${a.calendars.map(c => `
+            <label class="acc-cal">
+              <i style="background:${esc(c.color)}"></i>
+              <span class="grow">${esc(c.name)}</span>
+              ${c.writable ? '<span class="tiny">Lettura e scrittura</span>' : '<span class="tiny">Sola lettura</span>'}
+              <input type="checkbox" class="switch" data-cal-toggle="${a.id}" data-cal="${esc(c.id)}" ${c.enabled ? 'checked' : ''}>
+            </label>`).join('')}
+        </div>
+        <div class="acc-groups">
+          <div class="row"><span class="tiny grow">Gruppi e colori${a.provider === 'notion' ? (a.config.colorProp ? ` · da colonna “${esc(a.config.colorProp)}”` : '') : a.provider === 'google' ? ' · uno per calendario' : ' · dalle categorie del calendario'}</span>${a.provider === 'notion' ? `<button class="link" data-action="notion-color" data-id="${a.id}">${a.config.colorProp ? 'Cambia colonna' : 'Colora per colonna'}</button>` : ''}</div>
+          <div class="grp-chips">${(a.groups || []).map(g => `<button class="pill grp-chip" data-action="grp-color" data-type="acc" data-acc="${a.id}" data-gid="${esc(g.id)}"><i style="background:${esc(g.color)}"></i>${esc(g.name || a.name)}</button>`).join('')}</div>
+        </div>
+        <div class="row acc-foot">
+          <span class="muted grow">Promemoria predefinito per gli eventi importati</span>
+          <select class="select-chip" data-acc-rem="${a.id}">${REMINDERS.map(([v, l]) => `<option value="${v === null ? '' : v}" ${a.defaultReminder === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        </div>
+      </div>`).join('')}</div>` : ''}
+
+    <div class="section-head"><h2>${accs.length ? 'Aggiungi un altro account' : 'Collega un account'}</h2></div>
+    <div class="prov-grid">
+      <button class="card clickable prov-tile" data-action="add-google">${provIcon({ provider: 'google' })}<b>Google Calendar</b><span>Il calendario del tuo account Gmail. Lettura e scrittura.</span></button>
+      <button class="card clickable prov-tile" data-action="add-notion">${provIcon({ provider: 'notion' })}<b>Notion</b><span>Un database con una proprietà data. Lettura e scrittura.</span></button>
+      <button class="card clickable prov-tile" data-action="add-ics">${provIcon({ provider: 'ics' })}<b>Calendario da link</b><span>iCloud, Outlook, Nextcloud, Proton, orari universitari… (.ics, sola lettura)</span></button>
+    </div>
+  </div>`;
+}
+
+function setBusy(form, busy, label) {
+  const b = form.querySelector('.btn-primary');
+  if (!b) return;
+  if (busy) { b.dataset.label = b.innerHTML; b.innerHTML = `<span class="spinner"></span> ${label || 'Attendere…'}`; b.disabled = true; }
+  else { b.innerHTML = b.dataset.label || b.innerHTML; b.disabled = false; }
+}
+const showErr = (form, msg) => { const el = form.querySelector('.form-err'); el.textContent = msg || ''; el.hidden = !msg; };
+
+function modalGoogle() {
+  openModal(`
+    <h2>${provIcon({ provider: 'google' })} Collega Google Calendar</h2>
+    <p class="muted" style="margin-top:-6px">Google richiede che ogni app desktop abbia le proprie credenziali. Si creano una volta sola, gratis, in circa 5 minuti:</p>
+    <ol class="howto">
+      <li>Apri <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/projectcreate">Google Cloud Console</a> e crea un progetto (es. “Trama”).</li>
+      <li>In <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com">API e servizi → Libreria</a> abilita <b>Google Calendar API</b>.</li>
+      <li>In <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/auth/overview">Google Auth Platform</a> configura l'app come <b>Esterna</b>, poi in <i>Pubblico</i> premi <b>Pubblica app</b> (in modalità “test” Google scollega l'account ogni 7 giorni). Al primo accesso vedrai “app non verificata”: è la tua, scegli <i>Avanzate → Vai a Trama</i>.</li>
+      <li>In <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/auth/clients">Client</a> → <b>Crea client</b> → tipo <b>App desktop</b>. Copia ID client e client secret qui sotto.</li>
+    </ol>
+    <form class="form" data-submit="connect-google">
+      <label class="field"><span>ID client</span><input name="clientId" required placeholder="123456-abc.apps.googleusercontent.com" spellcheck="false"></label>
+      <label class="field"><span>Client secret</span><input name="clientSecret" type="password" placeholder="GOCSPX-…" spellcheck="false"></label>
+      <div class="form-err" hidden></div>
+      <div class="modal-actions"><button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">Accedi con Google</button></div>
+    </form>`);
+}
+
+function modalNotion() {
+  openModal(`
+    <h2>${provIcon({ provider: 'notion' })} Collega un database Notion</h2>
+    <ol class="howto">
+      <li>Su <a href="#" data-action="open-url" data-url="https://www.notion.so/profile/integrations">notion.so/profile/integrations</a> crea una <b>integrazione interna</b> e copia il <b>token</b>.</li>
+      <li>Apri il database in Notion → menu <b>⋯</b> → <b>Connessioni</b> → aggiungi la tua integrazione.</li>
+      <li>Copia il link del database (<i>Condividi → Copia link</i>) e incollalo qui.</li>
+    </ol>
+    <form class="form" data-submit="inspect-notion">
+      <label class="field"><span>Token dell'integrazione</span><input name="token" type="password" required placeholder="ntn_…" spellcheck="false"></label>
+      <label class="field"><span>Link o ID del database</span><input name="database" required placeholder="https://www.notion.so/…" spellcheck="false"></label>
+      <div class="notion-map" hidden></div>
+      <div class="form-err" hidden></div>
+      <div class="modal-actions"><button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">Verifica database</button></div>
+    </form>`);
+}
+
+function modalIcs() {
+  openModal(`
+    <h2>${provIcon({ provider: 'ics' })} Calendario da link</h2>
+    <p class="muted" style="margin-top:-6px">Incolla l'indirizzo iCal (.ics o webcal://) del calendario. Dove trovarlo:</p>
+    <ul class="howto">
+      <li><b>iCloud</b>: app Calendario → condividi calendario → <i>Calendario pubblico</i>.</li>
+      <li><b>Outlook / Microsoft 365</b>: Impostazioni → Calendario → Calendari condivisi → <i>Pubblica un calendario</i> → link ICS.</li>
+      <li><b>Google</b> (solo lettura, senza credenziali): Impostazioni del calendario → <i>Indirizzo segreto in formato iCal</i>.</li>
+      <li><b>Nextcloud, Proton, Fastmail</b>, orari dei corsi: cerca “link di iscrizione” o “esporta iCal”.</li>
+    </ul>
+    <form class="form" data-submit="connect-ics">
+      <label class="field"><span>Indirizzo</span><input name="url" required placeholder="webcal://… oppure https://….ics" spellcheck="false"></label>
+      <label class="field"><span>Nome (facoltativo)</span><input name="name" placeholder="Es. Calendario lezioni"></label>
+      <input type="hidden" name="color" value="#8e5bd9">
+      <div class="field"><span>Colore</span><div class="swatches" data-pick="color">${['#e5562a', '#2f9e5b', '#2f7ae5', '#8e5bd9', '#d9467a', '#1f9aa5', '#c9930a', '#8e8e93'].map((c, i) => `<button type="button" style="background:${c}" class="${i === 3 ? 'on' : ''}" data-v="${c}"></button>`).join('')}</div></div>
+      <div class="form-err" hidden></div>
+      <div class="modal-actions"><button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">Aggiungi calendario</button></div>
+    </form>`, (m) => {
+      const g = m.querySelector('[data-pick]');
+      g.addEventListener('click', (ev) => { const b = ev.target.closest('button[data-v]'); if (!b) return; g.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); m.querySelector('[name=color]').value = b.dataset.v; });
+    });
+}
+
+function viewSearch() {
+  const q = ui.search.toLowerCase();
+  const match = (s) => (s || '').toLowerCase().includes(q);
+  const ps = data.projects.filter(p => match(p.title) || match(p.description) || p.steps.some(s => match(s.text)) || p.traces.some(t => match(t.title) || match(t.body)));
+  const evs = data.events.filter(e => match(e.title) || match(e.location) || match(e.notes));
+  return `
+  <div class="eyebrow">Ricerca</div>
+  <h1 class="large-title">“${esc(ui.search)}”</h1>
+  <div class="grid-2">
+    <div><div class="section-head"><h2>Progetti (${ps.length})</h2></div><div class="stack">${ps.map(p => projectCard(p)).join('') || '<div class="empty">Nessun risultato.</div>'}</div></div>
+    <div><div class="section-head"><h2>Appuntamenti ed eventi (${evs.length})</h2></div><div class="stack">${evs.map(e => eventCard(e)).join('') || '<div class="empty">Nessun risultato.</div>'}</div></div>
+  </div>`;
+}
+
+function render() {
+  renderSidebar();
+  const v = $('#view');
+  const scroll = v.querySelector('.detail-pane')?.scrollTop;
+  const titles = { home: 'Home', progetti: 'Progetti', agenda: 'Agenda', promemoria: 'Promemoria', account: 'Account collegati' };
+  $('#toolbar-title').textContent = ui.search ? 'Ricerca' : titles[ui.view];
+  v.classList.toggle('full', ui.view === 'progetti' && !ui.search);
+  v.innerHTML = ui.search ? viewSearch() : ui.view === 'home' ? viewHome() : ui.view === 'progetti' ? viewProjects() : ui.view === 'agenda' ? viewAgenda() : ui.view === 'account' ? viewAccounts() : viewReminders();
+  renderSyncButton();
+  if (scroll) { const dp = v.querySelector('.detail-pane'); if (dp) dp.scrollTop = scroll; }
+}
+
+function go(view, extra = {}) {
+  closePopover(true);
+  const changed = ui.view !== view;
+  ui.view = view; ui.search = ''; $('#global-search').value = '';
+  Object.assign(ui, extra);
+  render();
+  if (changed) { const v = $('#view'); v.style.animation = 'none'; v.offsetHeight; v.style.animation = ''; v.scrollTop = 0; }
+}
+
+// ---------- Modali ----------
+function openModal(html, onMount) {
+  $('#modal').innerHTML = html;
+  $('#modal-backdrop').hidden = false;
+  onMount && onMount($('#modal'));
+  const f = $('#modal').querySelector('input:not([type=checkbox]),textarea');
+  f && setTimeout(() => f.focus(), 30);
+}
+function closeModal() { $('#modal-backdrop').hidden = true; $('#modal').innerHTML = ''; }
+
+const remSelect = (val, name = 'reminder') =>
+  `<select name="${name}">${REMINDERS.map(([v, l]) => `<option value="${v === null ? '' : v}" ${val === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+const readRem = (v) => v === '' ? null : Number(v);
+const projSelect = (val) => `<select name="projectId"><option value="">Nessuno</option>${data.projects.filter(p => p.status !== 'archiviato' || p.id === val).map(p => `<option value="${p.id}" ${p.id === val ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}</select>`;
+
+function defaultStart(dateKey) {
+  const now = new Date();
+  const d = dateKey ? parse(dateKey) : new Date(now);
+  if (dateKey && dateKey === dayKey(now) || !dateKey) { d.setHours(now.getHours() + 1, 0, 0, 0); }
+  else d.setHours(9, 0, 0, 0);
+  return d;
+}
+
+function modalNew() {
+  openModal(`
+    <h2>Cosa vuoi aggiungere?</h2>
+    <div class="type-picker">
+      <button data-action="new-project">${icon('i-folder')}Progetto<small>Un piano, un viaggio, un obiettivo</small></button>
+      <button data-action="new-event">${icon('i-calendar')}Appuntamento<small>Con data, ora e luogo</small></button>
+      <button data-action="new-step">${icon('i-bell')}Promemoria<small>Un passo da fare entro una data</small></button>
+    </div>
+    <div class="modal-actions"><button class="btn" data-action="close-modal">Annulla</button></div>`);
+}
+
+function modalProject() {
+  openModal(`
+    <h2>Nuovo progetto</h2>
+    <form class="form" data-submit="save-project">
+      <label class="field"><span>Titolo</span><input name="title" required placeholder="Es. Weekend a Lisbona"></label>
+      <label class="field"><span>Descrizione</span><textarea name="description" placeholder="Di cosa si tratta, in due righe"></textarea></label>
+      <div class="field-row">
+        <label class="field"><span>Raccolta</span><select name="category"><option value="">Nessuna</option>${data.categories.map(c => `<option value="${c.id}" ${ui.catFilter === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+        <label class="field"><span>Primo passo (facoltativo)</span><input name="step" placeholder="Es. Prenotare il volo"></label>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">Crea progetto</button></div>
+    </form>`);
+}
+
+function calendarSelect(ev) {
+  const accs = (data.accounts || []).filter(a => a.enabled);
+  if (ev && ev.source) {
+    const a = accOf(ev), c = calOf(ev);
+    return `<select name="calendar" disabled><option>${a ? `${PROV[a.provider]} · ${esc(c ? c.name : a.name)}` : 'Trama'}</option></select>`;
+  }
+  const sel = ev && ev.pushTo ? `${ev.pushTo.acc}|${ev.pushTo.cal}` : (ev ? '' : data.settings.defaultCalendar || '');
+  let opts = `<option value="">Trama · solo su questo computer</option>`;
+  for (const a of accs) for (const c of a.calendars.filter(c => c.writable && c.enabled)) {
+    const v = `${a.id}|${c.id}`;
+    opts += `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${PROV[a.provider]} · ${esc(c.name)}</option>`;
+  }
+  return `<select name="calendar">${opts}</select>`;
+}
+
+function eventFormHTML(ev, preset = {}, compact = false) {
+  const isNew = !ev;
+  const s = ev ? parse(ev.start) : defaultStart(preset.date);
+  const e = ev ? parse(ev.end || ev.start) : new Date(s.getTime() + 3600000);
+  const e0 = ev || { title: '', kind: 'appuntamento', projectId: preset.pid || '', allDay: false, location: '', reminder: 15, notes: '' };
+  const ro = ev && isReadOnly(ev);
+  const dis = ro ? 'disabled' : '';
+  const a = ev && accOf(ev);
+  return `
+    <form class="form" data-submit="save-event" data-id="${ev ? ev.id : ''}">
+      ${ro ? `<div class="note-ro">${icon('i-sync')} Evento importato da “${esc(a.name)}” in sola lettura: puoi cambiare solo tipo, progetto e promemoria.</div>` : ''}
+      <label class="field"><span>Titolo</span><input name="title" required value="${esc(e0.title)}" placeholder="${compact ? 'Nuovo evento' : 'Es. Dentista'}" ${dis}></label>
+      <div class="${compact ? 'row' : 'field'}" style="${compact ? 'gap:12px' : ''}">${compact ? '' : '<span>Tipo</span>'}
+        <div class="segmented wide" data-seg="kind" style="${compact ? 'flex:1' : ''}">
+          <button type="button" class="${e0.kind === 'appuntamento' ? 'on' : ''}" data-v="appuntamento">Appuntamento</button>
+          <button type="button" class="${e0.kind === 'evento' ? 'on' : ''}" data-v="evento">Evento</button>
+        </div>
+        <input type="hidden" name="kind" value="${e0.kind}">
+        ${compact ? `<label class="row" style="gap:7px;font-size:12.5px;color:var(--text-2);white-space:nowrap">Giornata <input type="checkbox" class="switch" name="allDay" ${e0.allDay ? 'checked' : ''} ${dis}></label>` : ''}
+      </div>
+      ${compact ? '' : `<label class="switch-row" style="padding:2px 0;border:0"><span>Tutto il giorno</span><input type="checkbox" class="switch" name="allDay" ${e0.allDay ? 'checked' : ''} ${dis}></label>`}
+      <div class="field-row">
+        <label class="field"><span>Inizio</span><input name="start" type="${e0.allDay ? 'date' : 'datetime-local'}" value="${e0.allDay ? dayKey(s) : iso(s)}" required ${dis}></label>
+        <label class="field"><span>Fine</span><input name="end" type="${e0.allDay ? 'date' : 'datetime-local'}" value="${e0.allDay ? dayKey(e) : iso(e)}" required ${dis}></label>
+      </div>
+      <label class="field"><span>Luogo</span><input name="location" value="${esc(e0.location)}" placeholder="Facoltativo" ${dis}></label>
+      <div class="field-row">
+        <label class="field"><span>Promemoria</span>${remSelect(e0.reminder)}</label>
+        <label class="field"><span>Progetto</span>${projSelect(e0.projectId)}</label>
+      </div>
+      <label class="field"><span>Calendario</span>${calendarSelect(ev)}</label>
+      ${compact
+        ? `<details class="more-notes"><summary>Aggiungi note</summary><textarea name="notes" rows="3" placeholder="Note facoltative">${esc(e0.notes)}</textarea></details>`
+        : `<label class="field"><span>Note</span><textarea name="notes" rows="3" placeholder="Facoltative" ${dis}>${esc(e0.notes)}</textarea></label>`}
+      <div class="modal-actions">
+        ${!isNew ? `<button type="button" class="btn danger left" data-action="del-event" data-id="${ev.id}">${icon('i-trash')} Elimina</button>` : ''}
+        ${ev && ev.source && ev.source.url ? `<button type="button" class="btn ${isNew ? 'left' : ''}" data-action="open-url" data-url="${esc(ev.source.url)}">Apri in ${a.provider === 'google' ? 'Google' : 'Notion'}</button>` : ''}
+        <button type="button" class="btn" data-action="close-all">Annulla</button><button class="btn-primary">${isNew ? 'Aggiungi' : 'Salva'}</button>
+      </div>
+    </form>`;
+}
+
+function bindEventForm(m) {
+  const ad = m.querySelector('[name=allDay]');
+  ad.addEventListener('change', () => {
+    for (const n of ['start', 'end']) {
+      const inp = m.querySelector(`[name=${n}]`);
+      const v = inp.value;
+      inp.type = ad.checked ? 'date' : 'datetime-local';
+      inp.value = ad.checked ? v.slice(0, 10) : (v.length === 10 ? v + (n === 'start' ? 'T09:00' : 'T10:00') : v);
+    }
+  });
+  const st = m.querySelector('[name=start]'), en = m.querySelector('[name=end]');
+  let delta = parse(en.value) - parse(st.value);
+  st.addEventListener('change', () => { const ns = parse(st.value); if (!ns) return; const ne = new Date(ns.getTime() + Math.max(delta, 0)); en.value = en.type === 'date' ? dayKey(ne) : iso(ne); });
+  en.addEventListener('change', () => { delta = parse(en.value) - parse(st.value); });
+  const seg = m.querySelector('[data-seg=kind]');
+  seg.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-v]'); if (!b) return;
+    seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    m.querySelector('[name=kind]').value = b.dataset.v;
+    if (b.dataset.v === 'evento' && !ad.checked && !ad.disabled) { ad.checked = true; ad.dispatchEvent(new Event('change')); }
+  });
+}
+
+function modalEvent(ev, preset = {}) {
+  closePopover();
+  openModal(`<h2>${ev ? 'Modifica' : 'Nuovo appuntamento'}</h2>${eventFormHTML(ev, preset)}`, bindEventForm);
+}
+
+// ---------- Popup animato sul giorno ----------
+let popState = null;
+function closePopover(instant) {
+  const pop = $('#popover-layer .day-pop');
+  document.querySelectorAll('.day.popping').forEach(x => x.classList.remove('popping'));
+  if (!pop) { popState = null; return; }
+  if (popState) document.removeEventListener('mousedown', popState.outside, true);
+  popState = null;
+  if (instant) { pop.remove(); return; }
+  pop.classList.add('closing');
+  pop.addEventListener('animationend', () => pop.remove(), { once: true });
+}
+
+function openDayPopover(dateKey) {
+  closePopover(true);
+  const cell = document.querySelector(`.day[data-date="${dateKey}"]`);
+  if (!cell) return;
+  const d = parse(dateKey);
+  const its = itemsOn(d, { appuntamento: true, evento: true, passo: true });
+  const layer = $('#popover-layer');
+  const pop = document.createElement('div');
+  pop.className = 'day-pop';
+  pop.innerHTML = `
+    <div class="pop-arrow"></div>
+    <div class="pop-body">
+    <div class="pop-head">
+      <div class="pop-date"><span class="pop-dnum">${d.getDate()}</span><div><div class="pop-wd">${d.toLocaleDateString('it-IT', { weekday: 'long' })}</div><div class="tiny">${d.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' })}</div></div></div>
+      <button class="icon-btn" data-action="close-all" title="Chiudi (Esc)">${icon('i-close')}</button>
+    </div>
+    ${its.length ? `<div class="pop-list">${its.map(it => it.ev
+      ? `<button class="pop-item" data-action="edit-event" data-id="${it.ev.id}"><i style="background:${esc(groupInfo(it.ev).color)}"></i><span class="grow">${esc(it.ev.title)}</span><span class="tiny">${it.ev.allDay ? 'Giorno' : fmtHM(parse(it.ev.start))}</span></button>`
+      : `<button class="pop-item" data-action="open-project" data-id="${it.project.id}"><i style="background:${esc(localGroup(it.project).color)}"></i><span class="grow">${esc(it.step.text)}</span><span class="tiny">${fmtHM(parse(it.step.due))}</span></button>`).join('')}
+</div>` : ''}
+    <div class="pop-label">Nuovo evento</div>
+    ${eventFormHTML(null, { date: dateKey }, true)}
+    </div>`;
+  layer.appendChild(pop);
+  bindEventForm(pop);
+
+  // posizione: a destra della cella, altrimenti a sinistra; verticalmente centrata e contenuta nella finestra
+  const r = cell.getBoundingClientRect();
+  const W = pop.offsetWidth, H = Math.min(pop.offsetHeight, window.innerHeight - 24);
+  let side = 'right';
+  let left = r.right + 14;
+  if (left + W > window.innerWidth - 12) { side = 'left'; left = r.left - 14 - W; }
+  if (left < 12) { side = 'below'; left = Math.max(12, Math.min(r.left + r.width / 2 - W / 2, window.innerWidth - W - 12)); }
+  let top = side === 'below' ? r.bottom + 12 : r.top + r.height / 2 - 120;
+  top = Math.max(12, Math.min(top, window.innerHeight - H - 12));
+  pop.style.left = left + 'px'; pop.style.top = top + 'px'; pop.querySelector('.pop-body').style.maxHeight = (window.innerHeight - 24) + 'px';
+  pop.dataset.side = side;
+  const ay = Math.max(18, Math.min(r.top + r.height / 2 - top, H - 18));
+  const ax = r.left + r.width / 2 - left;
+  pop.style.setProperty('--ay', ay + 'px');
+  pop.style.setProperty('--ax', ax + 'px');
+  pop.style.transformOrigin = side === 'right' ? `0 ${ay}px` : side === 'left' ? `100% ${ay}px` : `${ax}px 0`;
+  cell.classList.add('popping');
+  setTimeout(() => pop.querySelector('input[name=title]').focus(), 120);
+
+  const outside = (e) => {
+    if (pop.contains(e.target) || e.target.closest('.modal-backdrop')) return;
+    if (e.target.closest('.day')) return; // un altro giorno: lo gestisce il click
+    closePopover();
+  };
+  popState = { outside, date: dateKey };
+  setTimeout(() => document.addEventListener('mousedown', outside, true));
+}
+function closeAll() { closeModal(); closePopover(); }
+
+function modalStep(pid, step) {
+  const isNew = !step;
+  const s0 = step || { text: '', due: iso(defaultStart()), reminder: 0 };
+  openModal(`
+    <h2>${isNew ? 'Nuovo promemoria' : 'Modifica passo'}</h2>
+    <form class="form" data-submit="save-step" data-id="${step ? step.id : ''}" data-oldpid="${pid || ''}">
+      <label class="field"><span>Cosa devi fare</span><input name="text" required value="${esc(s0.text)}" placeholder="Es. Pagare la bolletta"></label>
+      <label class="field"><span>Progetto</span>${projSelect(pid || ui.projectId || data.projects.find(p => p.status === 'attivo')?.id)}</label>
+      <div class="field-row">
+        <label class="field"><span>Scadenza</span><input name="due" type="datetime-local" value="${s0.due || ''}"></label>
+        <label class="field"><span>Avvisami</span>${remSelect(s0.reminder)}</label>
+      </div>
+      <div class="modal-actions">
+        ${!isNew ? `<button type="button" class="btn danger left" data-action="del-step" data-pid="${pid}" data-id="${step.id}">${icon('i-trash')} Elimina</button>` : ''}
+        <button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">${isNew ? 'Aggiungi' : 'Salva'}</button>
+      </div>
+    </form>`);
+}
+
+function modalTrace(pid, tr) {
+  const t0 = tr || { title: '', body: '', at: iso(new Date()) };
+  openModal(`
+    <h2>${tr ? 'Modifica traccia' : 'Nuova traccia'}</h2>
+    <form class="form" data-submit="save-trace" data-pid="${pid}" data-id="${tr ? tr.id : ''}">
+      <label class="field"><span>Titolo</span><input name="title" required value="${esc(t0.title)}" placeholder="Es. Prenotazioni confermate"></label>
+      <label class="field"><span>Dettagli</span><textarea name="body" rows="5" placeholder="Codici, orari, link, decisioni…">${esc(t0.body)}</textarea></label>
+      <label class="field"><span>Data e ora</span><input name="at" type="datetime-local" value="${t0.at}"></label>
+      <div class="modal-actions">
+        ${tr ? `<button type="button" class="btn danger left" data-action="del-trace" data-pid="${pid}" data-id="${tr.id}">${icon('i-trash')} Elimina</button>` : ''}
+        <button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">Salva</button>
+      </div>
+    </form>`);
+}
+
+function modalCategory(c) {
+  const c0 = c || { name: '', color: '#0a84ff', icon: 'folder' };
+  openModal(`
+    <h2>${c ? 'Modifica raccolta' : 'Nuova raccolta'}</h2>
+    <form class="form" data-submit="save-cat" data-id="${c ? c.id : ''}">
+      <label class="field"><span>Nome</span><input name="name" required value="${esc(c0.name)}" placeholder="Es. Palestra"></label>
+      <input type="hidden" name="color" value="${hex(c0.color)}"><input type="hidden" name="icon" value="${c0.icon}">
+      <div class="field"><span>Colore</span><div class="swatches" data-pick="color">${[...new Set([hex(c0.color), ...SHADES.flatMap(x => x[1].slice(1, 3))])].map(k => `<button type="button" style="background:${k}" class="${k === hex(c0.color) ? 'on' : ''}" data-v="${k}"></button>`).join('')}</div></div>
+      <div class="field"><span>Simbolo</span><div class="swatches icons" data-pick="icon">${CAT_ICONS.map(k => `<button type="button" class="${k === c0.icon ? 'on' : ''}" data-v="${k}">${icon('c-' + k)}</button>`).join('')}</div></div>
+      <div class="modal-actions">
+        ${c ? `<button type="button" class="btn danger left" data-action="del-cat" data-id="${c.id}">${icon('i-trash')} Elimina</button>` : ''}
+        <button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">Salva</button>
+      </div>
+    </form>`, (m) => {
+      m.querySelectorAll('[data-pick]').forEach(g => g.addEventListener('click', (ev) => {
+        const b = ev.target.closest('button[data-v]'); if (!b) return;
+        g.querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on');
+        m.querySelector(`[name=${g.dataset.pick}]`).value = b.dataset.v;
+      }));
+    });
+}
+
+function modalSettings() {
+  const s = data.settings;
+  openModal(`
+    <h2>Impostazioni</h2>
+    <div class="field" style="margin-bottom:8px"><span>Aspetto</span>
+      <div class="segmented" data-theme-pick>${[['auto', 'Automatico'], ['light', 'Chiaro'], ['dark', 'Scuro']].map(([k, l]) => `<button class="${s.theme === k ? 'on' : ''}" data-v="${k}">${l}</button>`).join('')}</div>
+    </div>
+    <label class="switch-row"><div>Notifiche desktop<small>Avvisi all'orario dei promemoria</small></div><input type="checkbox" class="switch" data-setting="notifications" ${s.notifications ? 'checked' : ''}></label>
+    <label class="switch-row"><div>Resta attiva nell'area di notifica<small>Chiudendo la finestra Trama continua a ricordarti gli impegni</small></div><input type="checkbox" class="switch" data-setting="closeToTray" ${s.closeToTray ? 'checked' : ''}></label>
+    <label class="switch-row"><div>Avvia all'accesso<small>Parte in background quando entri nel desktop</small></div><input type="checkbox" class="switch" data-setting="autostart" ${s.autostart ? 'checked' : ''}></label>
+    <div class="switch-row"><div>Calendario per i nuovi eventi<small>Dove salvare di default ciò che crei</small></div>
+      <select class="select-chip" data-def-cal>${calendarSelect(null).replace(/^<select name="calendar">|<\/select>$/g, '')}</select></div>
+    <div class="switch-row"><div>Dati<small>Salvati su questo computer. Account e token restano cifrati in locale.</small></div>
+      <div class="row"><button class="btn small" data-action="export">Esporta</button><button class="btn small" data-action="import">Importa</button><button class="btn small" data-action="folder">Cartella</button></div></div>
+    <div class="modal-actions"><button class="btn left" data-action="test-notif">${icon('i-bell')} Prova notifica</button><button class="btn-primary" data-action="close-modal">Fine</button></div>`, (m) => {
+      m.querySelector('[data-theme-pick]').addEventListener('click', (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        s.theme = b.dataset.v; applyTheme(); save();
+        m.querySelectorAll('[data-theme-pick] button').forEach(x => x.classList.toggle('on', x === b));
+      });
+      m.querySelector('[data-def-cal]').addEventListener('change', (e) => { s.defaultCalendar = e.target.value; save(); });
+      m.querySelectorAll('[data-setting]').forEach(inp => inp.addEventListener('change', () => { s[inp.dataset.setting] = inp.checked; save(); }));
+    });
+}
+
+function applyTheme() {
+  const t = data.settings.theme;
+  if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', t);
+}
+
+function showMenu(anchor, items) {
+  const layer = $('#popover-layer');
+  const r = anchor.getBoundingClientRect();
+  layer.innerHTML = `<div class="menu">${items.map(it => it === '-' ? '<hr>' : `<button class="${it.danger ? 'danger' : ''}" data-mi="${it.id}">${icon(it.icon)} ${it.label}</button>`).join('')}</div>`;
+  const m = layer.firstChild;
+  m.style.top = (r.bottom + 6) + 'px';
+  m.style.left = Math.min(r.right - 210, window.innerWidth - 220) + 'px';
+  const close = () => { layer.innerHTML = ''; document.removeEventListener('mousedown', outside, true); };
+  const outside = (e) => { if (!m.contains(e.target)) close(); };
+  setTimeout(() => document.addEventListener('mousedown', outside, true));
+  m.addEventListener('click', (e) => { const b = e.target.closest('[data-mi]'); if (!b) return; close(); items.find(i => i.id === b.dataset.mi).run(); });
+}
+
+// ---------- Azioni ----------
+function findStep(pid, id) { const p = proj(pid); return [p, p?.steps.find(s => s.id === id)]; }
+
+const actions = {
+  nav: (el) => go(el.dataset.view, el.dataset.view === 'progetti' ? { catFilter: null } : {}),
+  cat: (el) => go('progetti', { catFilter: el.dataset.id, projFilter: 'attivi' }),
+  'clear-cat': () => go('progetti', { catFilter: null }),
+  'new-cat': () => modalCategory(),
+  'edit-cat': (el) => modalCategory(cat(el.dataset.id)),
+  'del-cat': (el) => {
+    const id = el.dataset.id;
+    data.categories = data.categories.filter(c => c.id !== id);
+    data.projects.forEach(p => { if (p.category === id) p.category = ''; });
+    ui.catFilter = null; save(); closeModal(); render(); toast('Raccolta eliminata');
+  },
+  'open-project': (el) => closePopover(true) || go('progetti', { projectId: el.dataset.id, projFilter: proj(el.dataset.id)?.status === 'archiviato' ? 'archivio' : (ui.view === 'progetti' ? ui.projFilter : 'attivi'), catFilter: ui.view === 'progetti' ? ui.catFilter : null }),
+  'proj-filter': (el) => { ui.projFilter = el.dataset.f; ui.projectId = null; render(); },
+  'toggle-star': (el) => { const p = proj(el.dataset.id); p.starred = !p.starred; save(); render(); },
+  'proj-menu': (el) => {
+    const p = proj(el.dataset.id);
+    showMenu(el, [
+      { id: 'tr', icon: 'i-note', label: 'Aggiungi traccia', run: () => modalTrace(p.id) },
+      { id: 'ev', icon: 'i-calendar', label: 'Aggiungi appuntamento', run: () => modalEvent(null, { pid: p.id }) },
+      '-',
+      p.status === 'attivo'
+        ? { id: 'pa', icon: 'i-clock', label: 'Metti in pausa', run: () => { p.status = 'in pausa'; touch(p); save(); render(); } }
+        : { id: 'ac', icon: 'i-check', label: 'Riattiva', run: () => { p.status = 'attivo'; touch(p); ui.projFilter = 'attivi'; save(); render(); } },
+      p.status !== 'archiviato' && { id: 'ar', icon: 'i-archive', label: 'Archivia', run: () => { p.status = 'archiviato'; save(); render(); toast('Progetto archiviato'); } },
+      '-',
+      { id: 'del', icon: 'i-trash', label: 'Elimina progetto', danger: true, run: () => {
+        openModal(`<h2>Eliminare “${esc(p.title)}”?</h2><p class="muted">Verranno eliminati anche passi, tracce e appuntamenti collegati. Non si può annullare.</p>
+          <div class="modal-actions"><button class="btn" data-action="close-modal">Annulla</button><button class="btn-primary" style="background:#e0352b" data-action="confirm-del-project" data-id="${p.id}">Elimina</button></div>`);
+      } },
+    ].filter(Boolean));
+  },
+  'confirm-del-project': (el) => {
+    const id = el.dataset.id;
+    data.projects = data.projects.filter(p => p.id !== id);
+    data.events = data.events.filter(e => e.projectId !== id);
+    ui.projectId = null; save(); closeModal(); render(); toast('Progetto eliminato');
+  },
+  'toggle-step': (el) => { const [p, s] = findStep(el.dataset.pid, el.dataset.id); s.done = !s.done; s.doneAt = s.done ? iso(new Date()) : null; touch(p); save(); render(); },
+  'complete-step': (el, ev) => {
+    ev.stopPropagation();
+    const [p, s] = findStep(el.dataset.pid, el.dataset.id);
+    s.done = true; s.doneAt = iso(new Date());
+    p.traces.push({ id: uid(), title: `Fatto: ${s.text}`, body: '', at: iso(new Date()) });
+    touch(p); save(); render(); toast('Passo completato');
+  },
+  'del-step': (el) => { const p = proj(el.dataset.pid); p.steps = p.steps.filter(s => s.id !== el.dataset.id); touch(p); save(); closeModal(); render(); },
+  'edit-step': (el) => { const [, s] = findStep(el.dataset.pid, el.dataset.id); modalStep(el.dataset.pid, s); },
+  'new-step': (el) => modalStep(el.dataset.pid || null),
+  'new-trace': (el) => modalTrace(el.dataset.pid),
+  'edit-trace': (el) => { const p = proj(el.dataset.pid); modalTrace(p.id, p.traces.find(t => t.id === el.dataset.id)); },
+  'del-trace': (el) => { const p = proj(el.dataset.pid); p.traces = p.traces.filter(t => t.id !== el.dataset.id); save(); closeModal(); render(); },
+  'new-project': () => modalProject(),
+  'new-event': (el) => modalEvent(null, { pid: el.dataset.pid, date: el.dataset.date || (ui.view === 'agenda' ? ui.sel : null) }),
+  'edit-event': (el) => { closePopover(true); modalEvent(data.events.find(e => e.id === el.dataset.id)); },
+  'del-event': (el) => {
+    const e = data.events.find(x => x.id === el.dataset.id);
+    data.events = data.events.filter(x => x !== e);
+    save(); closeAll(); render();
+    toast(e && e.source && !isReadOnly(e) ? `Eliminato anche da ${PROV[accOf(e).provider]}` : e && isReadOnly(e) ? 'Nascosto: tornerà alla prossima sincronizzazione se esiste ancora' : 'Eliminato');
+  },
+  'goto-agenda': (el) => { const d = parse(el.dataset.date); go('agenda', { sel: el.dataset.date, month: new Date(d.getFullYear(), d.getMonth(), 1) }); },
+  'sel-day': (el) => {
+    const k = el.dataset.date;
+    if (popState && popState.date === k) { closePopover(); return; }
+    ui.sel = k; const d = parse(k);
+    if (d.getMonth() !== ui.month.getMonth()) ui.month = new Date(d.getFullYear(), d.getMonth(), 1);
+    closePopover(true); render(); openDayPopover(k);
+  },
+  'close-all': () => closeAll(),
+  'grp-toggle': (el) => { const row = el.closest('.cal-row'); setGroup(el, { visible: row.classList.contains('off') }); },
+  'grp-color': (el) => showColorPicker(el, currentGroupColor(el), (c) => setGroup(el, { color: c })),
+  'acc-collapse': (el) => { const k = el.dataset.key; collapsed[k] = !collapsed[k]; try { localStorage.setItem('trama.collapsed', JSON.stringify(collapsed)); } catch {} el.closest('.cal-acc').classList.toggle('collapsed', !!collapsed[k]); },
+  'notion-color': (el) => modalNotionColor(el.dataset.id),
+  'open-url': (el) => api.openUrl(el.dataset.url),
+  'sync-now': async () => { const r = await api.syncNow(); if (!r.ok) toast(r.error); },
+  'cal-prev': () => { ui.month = new Date(ui.month.getFullYear(), ui.month.getMonth() - 1, 1); render(); },
+  'cal-next': () => { ui.month = new Date(ui.month.getFullYear(), ui.month.getMonth() + 1, 1); render(); },
+  'cal-today': () => { const t = new Date(); ui.month = new Date(t.getFullYear(), t.getMonth(), 1); ui.sel = dayKey(t); render(); },
+  chip: (el) => { ui.chips[el.dataset.k] = !ui.chips[el.dataset.k]; render(); },
+  'close-modal': () => closeModal(),
+  'test-notif': () => api.testNotification(),
+  export: async () => { if (await api.exportData()) toast('Backup esportato'); },
+  import: async () => {
+    try { const d = await api.importData(); if (d) { data = d; closeModal(); applyTheme(); render(); toast('Dati importati'); } }
+    catch (e) { toast('File non valido'); }
+  },
+  folder: () => api.openFolder(),
+  'add-google': () => modalGoogle(),
+  'add-notion': () => modalNotion(),
+  'add-ics': () => modalIcs(),
+  'acc-sync': async (el) => { const r = await api.syncNow(el.dataset.id); if (!r.ok) toast(r.error); },
+  'acc-menu': (el) => {
+    const a = data.accounts.find(x => x.id === el.dataset.id);
+    showMenu(el, [
+      { id: 'keep', icon: 'i-archive', label: 'Disconnetti, tieni gli eventi', run: async () => { await api.removeAccount({ id: a.id, removeEvents: false }); toast('Account disconnesso'); } },
+      { id: 'drop', icon: 'i-trash', label: 'Disconnetti e rimuovi eventi', danger: true, run: async () => { await api.removeAccount({ id: a.id, removeEvents: true }); toast('Account e eventi rimossi'); } },
+    ]);
+  },
+};
+
+const submits = {
+  'connect-google': async (f, fd) => {
+    showErr(f); setBusy(f, true, 'Completa l’accesso nel browser…');
+    const r = await api.google({ clientId: fd.get('clientId').trim(), clientSecret: fd.get('clientSecret').trim() });
+    setBusy(f, false);
+    if (!r.ok) return showErr(f, r.error);
+    closeModal(); go('account'); toast('Google Calendar collegato');
+  },
+  'inspect-notion': async (f, fd) => {
+    showErr(f);
+    const map = f.querySelector('.notion-map');
+    if (!map.hidden) { // secondo passaggio: collega
+      setBusy(f, true, 'Collegamento…');
+      const r = await api.notion({ token: fd.get('token').trim(), databaseId: f.dataset.db, title: f.dataset.title, titleProp: fd.get('titleProp'), dateProp: fd.get('dateProp'), locProp: fd.get('locProp'), notesProp: fd.get('notesProp'), colorProp: fd.get('colorProp') });
+      setBusy(f, false);
+      if (!r.ok) return showErr(f, r.error);
+      closeModal(); go('account'); toast('Notion collegato'); return;
+    }
+    setBusy(f, true, 'Verifica…');
+    const r = await api.notionInspect({ token: fd.get('token').trim(), database: fd.get('database').trim() });
+    setBusy(f, false);
+    if (!r.ok) return showErr(f, r.error);
+    const { id, title, props } = r.value;
+    const of = (types) => props.filter(p => types.includes(p.type));
+    const dates = of(['date']);
+    if (!dates.length) return showErr(f, `Il database “${title}” non ha proprietà di tipo Data.`);
+    const opt = (list, empty) => (empty ? `<option value="">${empty}</option>` : '') + list.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    f.dataset.db = id; f.dataset.title = title;
+    map.hidden = false;
+    map.innerHTML = `
+      <div class="note-ok">${icon('i-check')} Database trovato: <b>${esc(title)}</b>. Scegli quali colonne usare:</div>
+      <div class="field-row">
+        <label class="field"><span>Titolo</span><select name="titleProp">${opt(of(['title']))}</select></label>
+        <label class="field"><span>Data</span><select name="dateProp">${opt(dates)}</select></label>
+      </div>
+      <div class="field-row">
+        <label class="field"><span>Luogo</span><select name="locProp">${opt(of(['rich_text', 'select', 'place']), 'Nessuno')}</select></label>
+        <label class="field"><span>Note</span><select name="notesProp">${opt(of(['rich_text']), 'Nessuna')}</select></label>
+      </div>
+      <label class="field"><span>Colori da (Seleziona / Stato)</span><select name="colorProp">${opt(of(['select', 'multi_select', 'status']), 'Nessuna, un solo colore')}</select></label>`;
+    f.querySelectorAll('[name=token],[name=database]').forEach(i => i.readOnly = true);
+    f.querySelector('.btn-primary').textContent = 'Collega database';
+  },
+  'connect-ics': async (f, fd) => {
+    showErr(f); setBusy(f, true, 'Scarico il calendario…');
+    const r = await api.ics({ url: fd.get('url').trim(), name: fd.get('name').trim(), color: fd.get('color') });
+    setBusy(f, false);
+    if (!r.ok) return showErr(f, r.error);
+    closeModal(); go('account'); toast('Calendario aggiunto');
+  },
+  'save-project': (f, fd) => {
+    const now = iso(new Date());
+    const p = { id: uid(), title: fd.get('title').trim(), description: fd.get('description').trim(), category: fd.get('category'), starred: false, status: 'attivo', createdAt: now, updatedAt: now, steps: [], traces: [] };
+    if (fd.get('step').trim()) p.steps.push({ id: uid(), text: fd.get('step').trim(), due: null, reminder: null, done: false });
+    data.projects.push(p);
+    save(); closeModal(); go('progetti', { projectId: p.id, projFilter: 'attivi', catFilter: ui.catFilter && p.category === ui.catFilter ? ui.catFilter : null });
+  },
+  'save-event': (f, fd) => {
+    const cur = f.dataset.id && data.events.find(x => x.id === f.dataset.id);
+    if (cur && isReadOnly(cur)) {
+      Object.assign(cur, { kind: fd.get('kind'), projectId: fd.get('projectId'), reminder: readRem(fd.get('reminder')) });
+      delete cur.notifiedAt; save(); closeAll(); render(); toast('Salvato'); return;
+    }
+    const allDay = fd.get('allDay') === 'on';
+    let start = fd.get('start'), end = fd.get('end') || start;
+    if (parse(end) < parse(start)) end = start;
+    const obj = { title: fd.get('title').trim(), kind: fd.get('kind'), projectId: fd.get('projectId'), allDay,
+      start: allDay ? start.slice(0, 10) + 'T00:00' : start, end: allDay ? end.slice(0, 10) + 'T23:59' : end,
+      location: fd.get('location').trim(), reminder: readRem(fd.get('reminder')), notes: fd.get('notes').trim() };
+    if (f.dataset.id) {
+      const e = data.events.find(x => x.id === f.dataset.id);
+      if (e.start !== obj.start || e.reminder !== obj.reminder) delete e.notifiedAt;
+      Object.assign(e, obj);
+      const cv = fd.get('calendar');
+      if (!e.source) { if (cv) { const [acc, ...c] = cv.split('|'); e.pushTo = { acc, cal: c.join('|') }; } else delete e.pushTo; }
+    } else {
+      const ne = { id: uid(), ...obj };
+      const cv = fd.get('calendar');
+      if (cv) { const [acc, ...c] = cv.split('|'); ne.pushTo = { acc, cal: c.join('|') }; }
+      data.events.push(ne);
+    }
+    const p = proj(obj.projectId); if (p) touch(p);
+    const target = fd.get('calendar') ? (data.accounts || []).find(a => a.id === fd.get('calendar').split('|')[0]) : (cur && cur.source ? accOf(cur) : null);
+    save(); closeAll(); render(); toast(target ? `Salvato · invio a ${PROV[target.provider]}…` : 'Salvato');
+  },
+  'save-step': (f, fd) => {
+    const pid = fd.get('projectId');
+    let p = proj(pid);
+    if (!p) { // senza progetto: uso/creo il progetto "Promemoria sparsi"
+      p = data.projects.find(x => x.title === 'Promemoria sparsi' && x.status !== 'archiviato');
+      if (!p) { const now = iso(new Date()); p = { id: uid(), title: 'Promemoria sparsi', description: 'Cose da ricordare non legate a un progetto.', category: '', starred: false, status: 'attivo', createdAt: now, updatedAt: now, steps: [], traces: [] }; data.projects.push(p); }
+    }
+    const obj = { text: fd.get('text').trim(), due: fd.get('due') || null, reminder: readRem(fd.get('reminder')) };
+    if (obj.reminder !== null && !obj.due) obj.reminder = null;
+    if (f.dataset.id) {
+      const oldP = proj(f.dataset.oldpid);
+      const s = oldP.steps.find(x => x.id === f.dataset.id);
+      if (s.due !== obj.due || s.reminder !== obj.reminder) delete s.notifiedAt;
+      Object.assign(s, obj);
+      if (oldP !== p) { oldP.steps = oldP.steps.filter(x => x !== s); p.steps.push(s); }
+    } else p.steps.push({ id: uid(), ...obj, done: false });
+    touch(p); save(); closeModal(); render(); toast('Salvato');
+  },
+  'add-step': (f, fd) => {
+    const text = fd.get('text').trim(); if (!text) return;
+    const p = proj(f.dataset.pid);
+    p.steps.push({ id: uid(), text, due: null, reminder: null, done: false });
+    touch(p); save(); render();
+    $('#view [data-submit="add-step"] input')?.focus();
+  },
+  'save-trace': (f, fd) => {
+    const p = proj(f.dataset.pid);
+    const obj = { title: fd.get('title').trim(), body: fd.get('body').trim(), at: fd.get('at') || iso(new Date()) };
+    if (f.dataset.id) Object.assign(p.traces.find(t => t.id === f.dataset.id), obj);
+    else p.traces.push({ id: uid(), ...obj });
+    touch(p); save(); closeModal(); render();
+  },
+  'save-cat': (f, fd) => {
+    const obj = { name: fd.get('name').trim(), color: fd.get('color'), icon: fd.get('icon') };
+    if (f.dataset.id) Object.assign(cat(f.dataset.id), obj);
+    else data.categories.push({ id: uid(), ...obj });
+    save(); closeModal(); render();
+  },
+};
+
+// ---------- Eventi DOM ----------
+document.addEventListener('click', (e) => {
+  const w = e.target.closest('[data-win]');
+  if (w) { api[w.dataset.win](); return; }
+  const a = e.target.closest('[data-action]');
+  if (!a) return;
+  if (a.tagName === 'BUTTON' && a.closest('form') && a.type !== 'button') return;
+  const fn = actions[a.dataset.action];
+  if (fn) { if (a.closest('.card') && a !== a.closest('.card')) e.stopPropagation(); fn(a, e); }
+});
+
+document.addEventListener('submit', (e) => {
+  const f = e.target.closest('[data-submit]'); if (!f) return;
+  e.preventDefault();
+  submits[f.dataset.submit](f, new FormData(f));
+});
+document.addEventListener('change', async (e) => {
+  const t = e.target;
+  if (t.dataset.accToggle) { await api.updateAccount({ id: t.dataset.accToggle, patch: { enabled: t.checked } }); return; }
+  if (t.dataset.calToggle) { await api.updateAccount({ id: t.dataset.calToggle, patch: { calendars: [{ id: t.dataset.cal, enabled: t.checked }] } }); return; }
+  if ('accRem' in t.dataset) { await api.updateAccount({ id: t.dataset.accRem, patch: { defaultReminder: t.value === '' ? null : Number(t.value) } }); return; }
+  const el = e.target.closest('[data-change="proj-cat"]');
+  if (el) { const p = proj(el.dataset.id); p.category = el.value; touch(p); save(); render(); }
+});
+// modifica in linea titolo / descrizione progetto
+document.addEventListener('focusout', (e) => {
+  const el = e.target.closest('[data-edit]'); if (!el) return;
+  const p = proj(el.dataset.id); if (!p) return;
+  const v = el.innerText.trim();
+  if (el.dataset.edit === 'proj-title') { if (v && v !== p.title) { p.title = v; touch(p); save(); render(); } else el.innerText = p.title; }
+  if (el.dataset.edit === 'proj-desc' && v !== p.description) { p.description = v; touch(p); save(); }
+});
+document.addEventListener('keydown', (e) => {
+  const ed = e.target.closest('[data-edit="proj-title"]');
+  if (ed && e.key === 'Enter') { e.preventDefault(); ed.blur(); }
+  if (e.key === 'Escape') {
+    if (!$('#modal-backdrop').hidden) closeModal();
+    else if ($('#popover-layer .day-pop')) closePopover();
+    else if ($('#popover-layer .menu')) $('#popover-layer').innerHTML = '';
+    else if (ui.search) { ui.search = ''; $('#global-search').value = ''; render(); }
+    else if (document.activeElement?.blur) document.activeElement.blur();
+  }
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); modalNew(); }
+  if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); $('#global-search').focus(); }
+  if (mod && ['1', '2', '3', '4', '5'].includes(e.key)) { e.preventDefault(); go(['home', 'progetti', 'agenda', 'promemoria', 'account'][+e.key - 1]); }
+});
+$('#modal-backdrop').addEventListener('mousedown', (e) => { if (e.target.id === 'modal-backdrop') closeModal(); });
+$('#btn-new').addEventListener('click', modalNew);
+$('#btn-settings').addEventListener('click', modalSettings);
+$('#btn-sync').addEventListener('click', () => actions['sync-now']());
+$('#global-search').addEventListener('input', (e) => { ui.search = e.target.value.trim(); render(); });
+document.querySelector('.titlebar-drag').addEventListener('dblclick', () => api.maximize());
+document.querySelector('.toolbar').addEventListener('dblclick', (e) => { if (e.target.closest('.toolbar-actions')) return; api.maximize(); });
+window.addEventListener('blur', () => document.body.classList.add('blurred'));
+window.addEventListener('focus', () => document.body.classList.remove('blurred'));
+
+api.onDataChanged((d) => { if (dirty) return; data = d; render(); });
+api.onSyncStatus((st) => { syncing = !!st.syncing; renderSyncButton(); if (ui.view === 'account' && $('#modal-backdrop').hidden) render(); });
+api.onNavigate((r) => {
+  if (r.action === 'new') return modalNew();
+  if (r.view === 'agenda') { const d = parse(r.date); go('agenda', { sel: r.date, month: new Date(d.getFullYear(), d.getMonth(), 1) }); }
+  else if (r.view === 'progetti') go('progetti', { projectId: r.id, projFilter: 'attivi', catFilter: null });
+});
+
+// aggiorna "in corso", saluti e scadenze ogni minuto
+setInterval(() => { if ($('#modal-backdrop').hidden && !document.activeElement?.closest('[contenteditable], input, textarea')) render(); }, 60000);
+
+(async function init() {
+  data = await api.getData();
+  applyTheme();
+  render();
+})();
+window.addEventListener('scroll', () => { if (window.scrollY) window.scrollTo(0, 0); });
