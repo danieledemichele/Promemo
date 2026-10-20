@@ -4,12 +4,12 @@ const http = require('http');
 const crypto = require('crypto');
 const { parseICS } = require('./ics');
 
-const GAPI = process.env.TRAMA_GOOGLE_API || 'https://www.googleapis.com';
-const GAUTH = process.env.TRAMA_GOOGLE_AUTH || 'https://accounts.google.com/o/oauth2/v2/auth';
-const GTOKEN = process.env.TRAMA_GOOGLE_TOKEN || 'https://oauth2.googleapis.com/token';
-const NAPI = process.env.TRAMA_NOTION_API || 'https://api.notion.com';
+const GAPI = process.env.PROMEMO_GOOGLE_API || 'https://www.googleapis.com';
+const GAUTH = process.env.PROMEMO_GOOGLE_AUTH || 'https://accounts.google.com/o/oauth2/v2/auth';
+const GTOKEN = process.env.PROMEMO_GOOGLE_TOKEN || 'https://oauth2.googleapis.com/token';
+const NAPI = process.env.PROMEMO_NOTION_API || 'https://api.notion.com';
 const NVER = '2022-06-28';
-const CAPI = process.env.TRAMA_CALENDLY_API || 'https://api.calendly.com';
+const CAPI = process.env.PROMEMO_CALENDLY_API || 'https://api.calendly.com';
 const GSCOPE = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events';
 
 const pad = (n) => String(n).padStart(2, '0');

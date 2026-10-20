@@ -28,8 +28,7 @@
       "ai.js",
       "backup.js",
       "src/**/*",
-      "build/icon.png",
-      "!scripts/**"
+      "build/icon.png"
     ],
     "linux": {
       "target": [

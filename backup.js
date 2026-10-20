@@ -7,10 +7,10 @@ const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const vault = require('./vault');
 
-const DBX_AUTH = process.env.TRAMA_DROPBOX_AUTH || 'https://www.dropbox.com/oauth2/authorize';
-const DBX_API = process.env.TRAMA_DROPBOX_API || 'https://api.dropboxapi.com';
-const DBX_CONTENT = process.env.TRAMA_DROPBOX_CONTENT || 'https://content.dropboxapi.com';
-const RCLONE = process.env.TRAMA_RCLONE || 'rclone';
+const DBX_AUTH = process.env.PROMEMO_DROPBOX_AUTH || 'https://www.dropbox.com/oauth2/authorize';
+const DBX_API = process.env.PROMEMO_DROPBOX_API || 'https://api.dropboxapi.com';
+const DBX_CONTENT = process.env.PROMEMO_DROPBOX_CONTENT || 'https://content.dropboxapi.com';
+const RCLONE = process.env.PROMEMO_RCLONE || 'rclone';
 const MAGIC = Buffer.from('PMBK1');
 const EXT = '.pmbak';
 

@@ -107,8 +107,8 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.7.0.AppImage e dist/trama_1.7.0_amd64.deb
-sudo apt install ./dist/trama_1.7.0_amd64.deb
+npm run dist        # dist/Promemo-1.7.0.AppImage e dist/promemo_1.7.0_amd64.deb
+sudo apt install ./dist/promemo_1.7.0_amd64.deb
 ```
 
 ## Scorciatoie
@@ -117,12 +117,6 @@ Ctrl+K palette comandi · Ctrl+J assistente · Ctrl+B barra laterale · Ctrl+N n
 ## Dati
 `~/.config/Promemo/promemo.json` (scrittura atomica). Backup da *Impostazioni → Esporta*.
 
-## Cambiare nome
-```bash
-node scripts/rinomina.js NuovoNome   # aggiorna nome, pacchetto, appId e cartella dati
-npm run dist
-```
-Al primo avvio i dati vengono copiati dalla cartella del vecchio nome. Gli account collegati andranno ricollegati se il portachiavi di sistema lega le credenziali al nome dell'app.
 
 ## Struttura
 ```
@@ -134,7 +128,6 @@ sync.js        Google Calendar (OAuth PKCE), Notion API, feed .ics; unione e inv
 ics.js         parser iCalendar con fusi orari e ricorrenze
 preload.js     ponte sicuro verso l'interfaccia
 src/           interfaccia (HTML, CSS, JS senza framework)
-scripts/       utilità (rinomina)
 ```
 
 ## Licenza

@@ -1,6 +1,6 @@
 // Promemo — motori di intelligenza artificiale per l'assistente della Home
 'use strict';
-const AAPI = process.env.TRAMA_ANTHROPIC_API || 'https://api.anthropic.com';
+const AAPI = process.env.PROMEMO_ANTHROPIC_API || 'https://api.anthropic.com';
 
 const DEFAULTS = {
   anthropic: { model: 'claude-sonnet-5-5', baseUrl: '' },

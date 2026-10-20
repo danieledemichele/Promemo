@@ -2112,7 +2112,7 @@ function showSetup(fromSettings) {
         <div class="meter"><i id="su-meter"></i></div>
         <input id="su-pw2" type="password" placeholder="Ripeti la password" class="lock-input">
         <input id="su-hint" type="text" placeholder="Suggerimento (facoltativo, visibile a chiunque)" class="lock-input" maxlength="80">
-        ${lockInfo.hasLegacy ? `<label class="lock-check"><input type="checkbox" id="su-legacy" checked> Elimina la copia non cifrata della vecchia versione (Trama)</label>` : ''}
+        ${lockInfo.hasLegacy ? `<label class="lock-check"><input type="checkbox" id="su-legacy" checked> Elimina la copia non cifrata lasciata dalla versione precedente</label>` : ''}
       </div>
       <div class="lock-msg" id="su-msg"></div>
       <div class="lock-actions">

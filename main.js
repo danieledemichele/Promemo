@@ -16,17 +16,17 @@ let quitting = false;
 
 // ---------- Archivio locale (JSON) ----------
 const dataDir = () => app.getPath('userData');
-// se l'app è stata rinominata, recupera i dati dalla cartella del nome precedente
-const LEGACY_NAMES = ['Tr' + 'ama', "Trama"];
+// nome della cartella dati usato dalle prime versioni di sviluppo: al primo avvio i dati vengono recuperati da lì
+const LEGACY_NAMES = ['Trama'];
 function migrateLegacy() {
   try {
     const cur = dataDir();
     if (fs.existsSync(path.join(cur, 'promemo.json')) || fs.existsSync(path.join(cur, 'promemo.vault.json'))) return;
     for (const n of LEGACY_NAMES) {
       const old = path.join(app.getPath('appData'), n);
-      if (old !== cur && fs.existsSync(path.join(old, 'tr' + 'ama.json'))) {
+      if (old !== cur && fs.existsSync(path.join(old, LEGACY_NAMES[0].toLowerCase() + '.json'))) {
         fs.mkdirSync(cur, { recursive: true });
-        for (const f of fs.readdirSync(old)) if (/\.(json|bin)$/.test(f)) fs.copyFileSync(path.join(old, f), path.join(cur, f.replace(/^tr\x61ma/, 'promemo')));
+        for (const f of fs.readdirSync(old)) if (/\.(json|bin)$/.test(f)) fs.copyFileSync(path.join(old, f), path.join(cur, f.replace(/^[a-z]+(?=\.json$)/, 'promemo')));
         return;
       }
     }
@@ -176,7 +176,7 @@ const sync = createSync({
   secret: (id) => loadSecrets()[id],
   setSecret: (id, v) => { loadSecrets()[id] = v; saveSecrets(); },
   removeSecret: (id) => { delete loadSecrets()[id]; saveSecrets(); },
-  openExternal: (url) => process.env.TRAMA_TEST_AUTH ? fetch(url).catch(() => {}) : shell.openExternal(url),
+  openExternal: (url) => process.env.PROMEMO_TEST_AUTH ? fetch(url).catch(() => {}) : shell.openExternal(url),
   status: (st) => { if (win) win.webContents.send('sync-status', st); },
 });
 let pushTimer = null;
@@ -410,7 +410,7 @@ const backup = createBackup({
   setSecret: (k, v) => { loadSecrets()[k] = v; saveSecrets(); },
   lockscreen: () => readLs(),
   status: (st) => { if (win) win.webContents.send('backup-status', st); },
-  openExternal: (url) => process.env.TRAMA_TEST_AUTH ? null : shell.openExternal(url),
+  openExternal: (url) => process.env.PROMEMO_TEST_AUTH ? null : shell.openExternal(url),
 });
 const bkCfg = () => (data && data.settings.backup) || {};
 let bkTimer = null;
