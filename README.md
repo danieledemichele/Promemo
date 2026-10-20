@@ -17,6 +17,14 @@ Stile ispirato a macOS, dati salvati sul tuo computer, sincronizzazione con Goog
 - **Promemoria**: tutto ciò che ha un avviso, con notifiche desktop.
 - **Account collegati**: Google Calendar, Notion, calendari da link.
 
+## Password all'avvio
+Promemo può chiedere una password a ogni apertura (*Impostazioni → Password all'avvio*, proposta anche al primo avvio).
+- I dati (`promemo.enc`) e le credenziali degli account (`credenziali.enc`) vengono cifrati con **AES-256-GCM**; la chiave è derivata dalla password con **scrypt**. Le copie non cifrate vengono eliminate.
+- All'attivazione viene mostrata una **chiave di recupero** (24 caratteri): sblocca i dati se dimentichi la password e chiede subito di sceglierne una nuova.
+- Dopo 3 tentativi sbagliati l'attesa tra un tentativo e l'altro cresce fino a 60 secondi.
+- Finché Promemo è bloccata non può inviare notifiche né sincronizzare: dopo lo sblocco resta attiva (anche nell'area di notifica) fino all'uscita.
+- I backup esportati in JSON non sono cifrati.
+
 ## Calendari e colori
 Nella barra laterale, sotto **Calendari**, ogni account mostra i suoi gruppi con un colore:
 - **Su questo computer**: *Personale* e una voce per ogni raccolta (Viaggi, Casa, Studio…).
@@ -49,8 +57,8 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.3.0.AppImage e dist/trama_1.3.0_amd64.deb
-sudo apt install ./dist/trama_1.3.0_amd64.deb
+npm run dist        # dist/Promemo-1.4.0.AppImage e dist/trama_1.4.0_amd64.deb
+sudo apt install ./dist/trama_1.4.0_amd64.deb
 ```
 
 ## Scorciatoie
@@ -69,6 +77,7 @@ Al primo avvio i dati vengono copiati dalla cartella del vecchio nome. Gli accou
 ## Struttura
 ```
 main.js        processo principale: archivio, promemoria, vassoio, IPC
+vault.js       cifratura locale (scrypt + AES-256-GCM, chiave di recupero)
 sync.js        Google Calendar (OAuth PKCE), Notion API, feed .ics; unione e invio modifiche
 ics.js         parser iCalendar con fusi orari e ricorrenze
 preload.js     ponte sicuro verso l'interfaccia

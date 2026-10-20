@@ -1209,6 +1209,8 @@ function modalSettings() {
     <div class="field" style="margin-bottom:8px"><span>Aspetto</span>
       <div class="segmented" data-theme-pick>${[['auto', 'Automatico'], ['light', 'Chiaro'], ['dark', 'Scuro']].map(([k, l]) => `<button class="${s.theme === k ? 'on' : ''}" data-v="${k}">${l}</button>`).join('')}</div>
     </div>
+    <div class="switch-row"><div>Password all'avvio<small>${lockInfo.configured ? 'Attiva · dati cifrati con AES-256 su questo computer' : 'Non attiva · chiunque usi il PC può aprire Promemo'}</small></div>
+      <div class="row">${lockInfo.configured ? '<button class="btn small" data-action="pw-change">Cambia</button><button class="btn small danger" data-action="pw-remove">Disattiva</button>' : '<button class="btn small" data-action="pw-setup">Attiva</button>'}</div></div>
     <label class="switch-row"><div>Il tuo nome<small>Per il saluto nella Home</small></div><input class="select-chip name-in" data-name-in value="${esc(s.userName || '')}" placeholder="Es. Daniele"></label>
     <label class="switch-row"><div>Notifiche desktop<small>Avvisi all'orario dei promemoria</small></div><input type="checkbox" class="switch" data-setting="notifications" ${s.notifications ? 'checked' : ''}></label>
     <label class="switch-row"><div>Resta attiva nell'area di notifica<small>Chiudendo la finestra Promemo continua a ricordarti gli impegni</small></div><input type="checkbox" class="switch" data-setting="closeToTray" ${s.closeToTray ? 'checked' : ''}></label>
@@ -1321,6 +1323,9 @@ const actions = {
     closePopover(true); render(); openDayPopover(k);
   },
   'close-all': () => closeAll(),
+  'pw-change': () => modalNewPassword(false),
+  'pw-remove': () => modalRemovePassword(),
+  'pw-setup': () => { closeModal(); showSetup(true); },
   palette: () => openPalette(),
   'grp-toggle': (el) => { const row = el.closest('.cal-row'); setGroup(el, { visible: row.classList.contains('off') }); },
   'grp-color': (el) => showColorPicker(el, currentGroupColor(el), (c) => setGroup(el, { color: c })),
@@ -1334,7 +1339,7 @@ const actions = {
   chip: (el) => { ui.chips[el.dataset.k] = !ui.chips[el.dataset.k]; render(); },
   'close-modal': () => closeModal(),
   'test-notif': () => api.testNotification(),
-  export: async () => { if (await api.exportData()) toast('Backup esportato'); },
+  export: async () => { if (await api.exportData()) toast(lockInfo.configured ? 'Backup esportato (il file non è cifrato: conservalo con cura)' : 'Backup esportato'); },
   import: async () => {
     try { const d = await api.importData(); if (d) { data = d; closeModal(); applyTheme(); render(); toast('Dati importati'); } }
     catch (e) { toast('File non valido'); }
@@ -1355,6 +1360,21 @@ const actions = {
 };
 
 const submits = {
+  'pw-change': async (f, fd) => {
+    if (fd.get('next') !== fd.get('next2')) return showErr(f, 'Le due password non coincidono.');
+    setBusy(f, true, 'Salvo…');
+    const r = await api.lockChange({ current: fd.get('current') || '', next: fd.get('next'), hint: fd.get('hint') });
+    setBusy(f, false);
+    if (!r.ok) return showErr(f, r.error);
+    lockInfo = await api.lockState(); closeModal(); toast('Password aggiornata');
+  },
+  'pw-remove': async (f, fd) => {
+    setBusy(f, true, 'Decifro…');
+    const r = await api.lockRemove({ current: fd.get('current') });
+    setBusy(f, false);
+    if (!r.ok) return showErr(f, r.error);
+    lockInfo = await api.lockState(); closeModal(); toast('Password disattivata');
+  },
   'connect-google': async (f, fd) => {
     showErr(f); setBusy(f, true, 'Completa l’accesso nel browser…');
     const r = await api.google({ clientId: fd.get('clientId').trim(), clientSecret: fd.get('clientSecret').trim() });
@@ -1488,6 +1508,7 @@ const submits = {
 
 // ---------- Eventi DOM ----------
 document.addEventListener('click', (e) => {
+  if (!data && !e.target.closest('#lock')) return;
   const w = e.target.closest('[data-win]');
   if (w) { api[w.dataset.win](); return; }
   const a = e.target.closest('[data-action]');
@@ -1520,6 +1541,7 @@ document.addEventListener('focusout', (e) => {
   if (el.dataset.edit === 'proj-desc' && v !== p.description) { p.description = v; touch(p); save(); }
 });
 document.addEventListener('keydown', (e) => {
+  if (!data) return;
   const ed = e.target.closest('[data-edit="proj-title"]');
   if (ed && e.key === 'Enter') { e.preventDefault(); ed.blur(); }
   if (e.key === 'Escape') {
@@ -1554,11 +1576,179 @@ api.onNavigate((r) => {
 });
 
 // aggiorna "in corso", saluti e scadenze ogni minuto
-setInterval(() => { if ($('#modal-backdrop').hidden && !document.activeElement?.closest('[contenteditable], input, textarea')) render(); }, 60000);
+setInterval(() => { if (!data) return; const lk = $('#lock'); if (lk && !lk.hidden) return; if ($('#modal-backdrop').hidden && !document.activeElement?.closest('[contenteditable], input, textarea')) render(); }, 60000);
+
+// ---------- Schermata di accesso ----------
+let lockInfo = { configured: false };
+const LOCK_BG = `<div class="lock-bg"><i></i><i></i><i></i></div>
+  <div class="lock-drag"><div class="traffic"><button class="tl tl-close" data-lockwin="close" title="Esci"></button><button class="tl tl-min" data-lockwin="minimize"></button><button class="tl tl-max" data-lockwin="maximize"></button></div></div>`;
+
+function lockClock() {
+  const now = new Date();
+  return `<div class="lock-clock"><div class="lock-date">${now.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}</div><div class="lock-time">${fmtHM(now)}</div></div>`;
+}
+
+function strength(pw) {
+  let n = 0;
+  if (pw.length >= 8) n++; if (pw.length >= 12) n++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) n++;
+  if (/\d/.test(pw)) n++; if (/[^A-Za-z0-9]/.test(pw)) n++;
+  return Math.min(4, n);
+}
+
+function bindLockWin(el) {
+  el.querySelectorAll('[data-lockwin]').forEach(b => b.addEventListener('click', () => api[b.dataset.lockwin]()));
+}
+
+function showLock(st) {
+  const el = $('#lock');
+  el.hidden = false; el.className = 'lock';
+  let mode = 'pw';
+  const draw = () => {
+    el.innerHTML = `${LOCK_BG}${lockClock()}
+    <form class="lock-card" id="lock-form" autocomplete="off">
+      <img src="../build/icon.png" class="lock-icon" alt="">
+      <div class="lock-title">Promemo</div>
+      <div class="lock-sub">${mode === 'pw' ? 'Inserisci la password per sbloccare' : 'Inserisci la chiave di recupero'}</div>
+      <div class="lock-field">
+        <input id="lock-in" type="${mode === 'pw' ? 'password' : 'text'}" placeholder="${mode === 'pw' ? 'Password' : 'XXXX-XXXX-XXXX-XXXX-XXXX-XXXX'}" spellcheck="false" ${mode === 'rec' ? 'style="text-transform:uppercase;letter-spacing:.06em"' : ''}>
+        ${mode === 'pw' ? `<button type="button" class="lock-eye" id="lock-eye" title="Mostra">${icon('i-eye')}</button>` : ''}
+        <button class="lock-go" title="Sblocca">${icon('i-arrow-r')}</button>
+      </div>
+      <div class="lock-msg" id="lock-msg">${mode === 'pw' && st.hint ? 'Suggerimento: ' + esc(st.hint) : ''}</div>
+      <button type="button" class="lock-link" id="lock-switch">${mode === 'pw' ? 'Password dimenticata? Usa la chiave di recupero' : 'Torna alla password'}</button>
+    </form>`;
+    bindLockWin(el);
+    const inp = el.querySelector('#lock-in');
+    setTimeout(() => inp.focus(), 60);
+    el.querySelector('#lock-switch').addEventListener('click', () => { mode = mode === 'pw' ? 'rec' : 'pw'; draw(); });
+    el.querySelector('#lock-eye')?.addEventListener('click', () => { inp.type = inp.type === 'password' ? 'text' : 'password'; inp.focus(); });
+    el.querySelector('#lock-form').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      if (!inp.value) return;
+      const card = el.querySelector('.lock-card');
+      card.classList.add('busy');
+      const r = await api.unlock({ secret: inp.value, recovery: mode === 'rec' });
+      card.classList.remove('busy');
+      if (!r.ok) {
+        const msg = el.querySelector('#lock-msg');
+        msg.textContent = r.error + (r.wait ? ` Attendi ${Math.ceil(r.wait / 1000)} s.` : '');
+        msg.classList.add('err');
+        card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+        inp.select();
+        return;
+      }
+      await enterApp();
+      if (r.recovered) modalNewPassword(true);
+    });
+  };
+  draw();
+  clearInterval(showLock._t);
+  showLock._t = setInterval(() => { const t = el.querySelector('.lock-time'); if (el.hidden) return clearInterval(showLock._t); if (t) t.textContent = fmtHM(new Date()); }, 15000);
+}
+
+async function enterApp() {
+  data = await api.getData();
+  lockInfo = await api.lockState();
+  applyTheme();
+  render();
+  const el = $('#lock');
+  if (!el.hidden) { el.classList.add('leaving'); setTimeout(() => { el.hidden = true; el.innerHTML = ''; el.className = 'lock'; }, 450); }
+}
+
+function showSetup(fromSettings) {
+  const el = $('#lock');
+  el.hidden = false; el.className = 'lock' + (fromSettings ? ' over' : '');
+  el.innerHTML = `${LOCK_BG}
+    <form class="lock-card wide" id="setup-form" autocomplete="off">
+      <img src="../build/icon.png" class="lock-icon" alt="">
+      <div class="lock-title">Proteggi Promemo</div>
+      <div class="lock-sub">Scegli una password: ti verrà chiesta a ogni avvio e servirà a cifrare impegni, progetti e credenziali degli account su questo computer.</div>
+      <div class="lock-stack">
+        <input id="su-pw" type="password" placeholder="Password (almeno 8 caratteri)" class="lock-input">
+        <div class="meter"><i id="su-meter"></i></div>
+        <input id="su-pw2" type="password" placeholder="Ripeti la password" class="lock-input">
+        <input id="su-hint" type="text" placeholder="Suggerimento (facoltativo, visibile a chiunque)" class="lock-input" maxlength="80">
+        ${lockInfo.hasLegacy ? `<label class="lock-check"><input type="checkbox" id="su-legacy" checked> Elimina la copia non cifrata della vecchia versione (Trama)</label>` : ''}
+      </div>
+      <div class="lock-msg" id="su-msg"></div>
+      <div class="lock-actions">
+        <button type="button" class="btn" id="su-later">${fromSettings ? 'Annulla' : 'Non ora'}</button>
+        <button class="btn-primary" id="su-go">Attiva protezione</button>
+      </div>
+    </form>`;
+  bindLockWin(el);
+  const pw = el.querySelector('#su-pw'), pw2 = el.querySelector('#su-pw2'), msg = el.querySelector('#su-msg');
+  setTimeout(() => pw.focus(), 60);
+  pw.addEventListener('input', () => { const n = strength(pw.value); const m = el.querySelector('#su-meter'); m.style.width = (n / 4 * 100) + '%'; m.dataset.s = n; });
+  el.querySelector('#su-later').addEventListener('click', () => {
+    if (!fromSettings) { data.settings.lockDeclined = true; save(); }
+    el.classList.add('leaving'); setTimeout(() => { el.hidden = true; el.innerHTML = ''; }, 400);
+  });
+  el.querySelector('#setup-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    msg.classList.add('err');
+    if (pw.value.length < 8) { msg.textContent = 'Usa almeno 8 caratteri.'; return; }
+    if (pw.value !== pw2.value) { msg.textContent = 'Le due password non coincidono.'; pw2.select(); return; }
+    const btn = el.querySelector('#su-go'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Cifro i dati…';
+    await new Promise(r => setTimeout(r, 200)); // lascia partire eventuali salvataggi in sospeso
+    const r = await api.lockSetup({ password: pw.value, hint: el.querySelector('#su-hint').value, removeLegacy: !!el.querySelector('#su-legacy')?.checked });
+    if (!r.ok) { btn.disabled = false; btn.textContent = 'Attiva protezione'; msg.textContent = r.error; return; }
+    lockInfo = await api.lockState();
+    showRecovery(r.recovery);
+  });
+}
+
+function showRecovery(code) {
+  const el = $('#lock');
+  el.innerHTML = `${LOCK_BG}
+    <div class="lock-card wide">
+      <div class="lock-badge">${icon('i-check')}</div>
+      <div class="lock-title">Protezione attiva</div>
+      <div class="lock-sub">Questa è la tua <b>chiave di recupero</b>. Se dimentichi la password è l'unico modo per riaprire i dati: senza, nessuno può recuperarli. Scrivila su carta o salvala nel gestore di password.</div>
+      <div class="rec-code" id="rec-code">${esc(code)}</div>
+      <div class="lock-actions center"><button class="btn" id="rec-copy">${icon('i-note')} Copia</button></div>
+      <label class="lock-check"><input type="checkbox" id="rec-ok"> Ho conservato la chiave in un posto sicuro</label>
+      <div class="lock-actions"><button class="btn-primary" id="rec-done" disabled>Continua</button></div>
+    </div>`;
+  bindLockWin(el);
+  el.querySelector('#rec-copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(code); toast('Chiave copiata'); }
+    catch { const r = document.createRange(); r.selectNodeContents(el.querySelector('#rec-code')); getSelection().removeAllRanges(); getSelection().addRange(r); }
+  });
+  el.querySelector('#rec-ok').addEventListener('change', (e) => { el.querySelector('#rec-done').disabled = !e.target.checked; });
+  el.querySelector('#rec-done').addEventListener('click', () => { el.classList.add('leaving'); setTimeout(() => { el.hidden = true; el.innerHTML = ''; }, 400); toast('Da ora Promemo chiederà la password a ogni avvio'); });
+}
+
+function modalNewPassword(recovered) {
+  openModal(`<h2>${recovered ? 'Scegli una nuova password' : 'Cambia password'}</h2>
+    ${recovered ? '<p class="muted" style="margin-top:-6px">Hai sbloccato con la chiave di recupero: imposta subito una nuova password. La chiave di recupero resta valida.</p>' : ''}
+    <form class="form" data-submit="pw-change">
+      ${recovered ? '' : '<label class="field"><span>Password attuale</span><input name="current" type="password" required></label>'}
+      <label class="field"><span>Nuova password</span><input name="next" type="password" required minlength="8" placeholder="Almeno 8 caratteri"></label>
+      <label class="field"><span>Ripeti la nuova password</span><input name="next2" type="password" required></label>
+      <label class="field"><span>Suggerimento (facoltativo)</span><input name="hint" maxlength="80" value="${esc(lockInfo.hint || '')}"></label>
+      <div class="form-err" hidden></div>
+      <div class="modal-actions">${recovered ? '' : '<button type="button" class="btn" data-action="close-modal">Annulla</button>'}<button class="btn-primary">Salva password</button></div>
+    </form>`);
+}
+
+function modalRemovePassword() {
+  openModal(`<h2>Disattiva la password</h2>
+    <p class="muted" style="margin-top:-6px">I dati torneranno salvati senza cifratura e Promemo si aprirà senza chiedere nulla. Le credenziali degli account restano protette dal portachiavi di sistema.</p>
+    <form class="form" data-submit="pw-remove">
+      <label class="field"><span>Password attuale</span><input name="current" type="password" required></label>
+      <div class="form-err" hidden></div>
+      <div class="modal-actions"><button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary" style="background:#e0352b">Disattiva</button></div>
+    </form>`);
+}
 
 (async function init() {
+  lockInfo = await api.lockState();
+  if (lockInfo.locked) { showLock(lockInfo); return; }
   data = await api.getData();
   applyTheme();
   render();
+  if (!lockInfo.configured && !data.settings.lockDeclined) showSetup(false);
 })();
 window.addEventListener('scroll', () => { if (window.scrollY) window.scrollTo(0, 0); });

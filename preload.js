@@ -24,5 +24,10 @@ contextBridge.exposeInMainWorld('promemo', {
   updateAccount: (a) => ipcRenderer.invoke('acc:update', a),
   openUrl: (u) => ipcRenderer.send('open-url', u),
   onSyncStatus: (cb) => ipcRenderer.on('sync-status', (_e, s) => cb(s)),
+  lockState: () => ipcRenderer.invoke('lock:state'),
+  unlock: (a) => ipcRenderer.invoke('lock:unlock', a),
+  lockSetup: (a) => ipcRenderer.invoke('lock:setup', a),
+  lockChange: (a) => ipcRenderer.invoke('lock:change', a),
+  lockRemove: (a) => ipcRenderer.invoke('lock:remove', a),
   onMaximized: (cb) => ipcRenderer.on('maximized', (_e, v) => cb(v)),
 });

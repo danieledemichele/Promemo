@@ -1,6 +1,7 @@
 // Promemo — processo principale Electron
 const { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage, dialog, shell, safeStorage } = require('electron');
 const { createSync } = require('./sync');
+const vaultLib = require('./vault');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -18,7 +19,7 @@ const LEGACY_NAMES = ['Tr' + 'ama', "Trama"];
 function migrateLegacy() {
   try {
     const cur = dataDir();
-    if (fs.existsSync(path.join(cur, 'promemo.json'))) return;
+    if (fs.existsSync(path.join(cur, 'promemo.json')) || fs.existsSync(path.join(cur, 'promemo.vault.json'))) return;
     for (const n of LEGACY_NAMES) {
       const old = path.join(app.getPath('appData'), n);
       if (old !== cur && fs.existsSync(path.join(old, 'tr' + 'ama.json'))) {
@@ -30,6 +31,17 @@ function migrateLegacy() {
   } catch (e) { console.error('migrazione', e); }
 }
 const dataFile = () => path.join(dataDir(), 'promemo.json');
+const vaultFile = () => path.join(dataDir(), 'promemo.vault.json');
+const encFile = () => path.join(dataDir(), 'promemo.enc');
+
+// ---------- Cassaforte (password all'avvio) ----------
+let vault = null;     // intestazione della cassaforte, se la protezione è attiva
+let dataKey = null;   // chiave dati in memoria finché l'app resta aperta
+let recoveredSession = false;
+let failures = 0, nextTry = 0;
+function readVault() { try { return JSON.parse(fs.readFileSync(vaultFile(), 'utf8')); } catch { return null; } }
+function writeVault(h) { const t = vaultFile() + '.tmp'; fs.writeFileSync(t, JSON.stringify(h, null, 2), { mode: 0o600 }); fs.renameSync(t, vaultFile()); }
+function writeAtomic(file, buf) { const t = file + '.tmp'; fs.writeFileSync(t, buf, { mode: 0o600 }); fs.renameSync(t, file); }
 
 function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
 
@@ -91,6 +103,11 @@ function normalize(d) {
 }
 
 function loadData() {
+  if (vault) {
+    if (!dataKey) throw new Error('bloccato');
+    if (!fs.existsSync(encFile())) { const d = normalize(seed()); saveData(d); return d; }
+    return normalize(JSON.parse(vaultLib.open(dataKey, fs.readFileSync(encFile())).toString('utf8')));
+  }
   try {
     const raw = fs.readFileSync(dataFile(), 'utf8');
     return normalize(JSON.parse(raw));
@@ -107,6 +124,11 @@ function loadData() {
 
 function saveData(d) {
   fs.mkdirSync(dataDir(), { recursive: true });
+  if (vault) {
+    if (!dataKey) return; // bloccata: niente da salvare
+    writeAtomic(encFile(), vaultLib.seal(dataKey, JSON.stringify(d)));
+    return;
+  }
   const tmp = dataFile() + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(d, null, 2));
   fs.renameSync(tmp, dataFile());
@@ -116,9 +138,14 @@ let data = null;
 
 // ---------- Credenziali (cifrate con il portachiavi di sistema se disponibile) ----------
 const secretsFile = () => path.join(dataDir(), 'credenziali.bin');
+const secretsEnc = () => path.join(dataDir(), 'credenziali.enc');
 let secrets = null;
 function loadSecrets() {
   if (secrets) return secrets;
+  if (vault && dataKey) {
+    try { secrets = JSON.parse(vaultLib.open(dataKey, fs.readFileSync(secretsEnc())).toString('utf8')); } catch { secrets = {}; }
+    return secrets;
+  }
   try {
     const buf = fs.readFileSync(secretsFile());
     const txt = buf.slice(0, 5).toString() === 'PLAIN' ? buf.slice(5).toString() : safeStorage.decryptString(buf);
@@ -128,6 +155,7 @@ function loadSecrets() {
 }
 function saveSecrets() {
   const txt = JSON.stringify(secrets || {});
+  if (vault) { if (dataKey) writeAtomic(secretsEnc(), vaultLib.seal(dataKey, txt)); return; }
   let buf;
   try { buf = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(txt) : null; } catch { buf = null; }
   if (!buf) buf = Buffer.concat([Buffer.from('PLAIN'), Buffer.from(txt)]);
@@ -231,6 +259,7 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
   win.on('close', (e) => {
+    if (!data) { quitting = true; app.quit(); return; } // bloccata: chiudere significa uscire
     if (!quitting && data.settings.closeToTray && tray) { e.preventDefault(); win.hide(); }
   });
   win.on('closed', () => { win = null; });
@@ -246,7 +275,7 @@ function createTray() {
     tray.setToolTip('Promemo');
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: 'Apri Promemo', click: showWindow },
-      { label: 'Nuovo…', click: () => { showWindow(); win.webContents.send('navigate', { action: 'new' }); } },
+      { label: 'Nuovo…', click: () => { showWindow(); if (data) win.webContents.send('navigate', { action: 'new' }); } },
       { type: 'separator' },
       { label: 'Esci', click: () => { quitting = true; app.quit(); } },
     ]));
@@ -257,6 +286,7 @@ function createTray() {
 // ---------- IPC ----------
 ipcMain.handle('data:get', () => data);
 ipcMain.handle('data:set', (_e, d) => {
+  if (!data) return null;
   const prevAuto = data.settings.autostart;
   const r = sync.reconcile(data, d);
   data = r.data; saveData(data);
@@ -267,7 +297,7 @@ ipcMain.handle('data:set', (_e, d) => {
 });
 
 // ---------- Account collegati ----------
-const wrap = (fn) => async (_e, arg) => { try { return { ok: true, value: await fn(arg) }; } catch (e) { return { ok: false, error: e.cause ? `Rete non raggiungibile: ${e.cause.code || e.message}` : e.message }; } };
+const wrap = (fn) => async (_e, arg) => { if (!data) return { ok: false, error: 'Promemo è bloccata' }; try { return { ok: true, value: await fn(arg) }; } catch (e) { return { ok: false, error: e.cause ? `Rete non raggiungibile: ${e.cause.code || e.message}` : e.message }; } };
 ipcMain.handle('acc:google', wrap((a) => sync.googleConnect(a)));
 ipcMain.handle('acc:notion-inspect', wrap((a) => sync.notionInspect(a)));
 ipcMain.handle('acc:notion', wrap((a) => sync.notionConnect(a)));
@@ -311,12 +341,98 @@ ipcMain.handle('data:import', async () => {
   if (!filePaths || !filePaths[0]) return null;
   const d = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
   if (!Array.isArray(d.projects) || !Array.isArray(d.events)) throw new Error('File non valido');
-  fs.copyFileSync(dataFile(), dataFile() + '.prima-import-' + Date.now());
+  if (!vault && fs.existsSync(dataFile())) fs.copyFileSync(dataFile(), dataFile() + '.prima-import-' + Date.now());
   d.accounts = data.accounts; normalize(d); d.rev = data.rev + 1;
   data = d; saveData(data);
   return data;
 });
 ipcMain.handle('data:folder', () => shell.openPath(dataDir()));
+
+// ---------- IPC della cassaforte ----------
+const isStrong = (p) => typeof p === 'string' && p.length >= 8;
+function removePlainCopies(removeLegacy) {
+  const dir = dataDir();
+  for (const f of fs.readdirSync(dir)) {
+    if (/^promemo\.json(\.tmp|\.corrotto-\d+|\.prima-import-\d+)?$/.test(f) || f === 'credenziali.bin') { try { fs.unlinkSync(path.join(dir, f)); } catch {} }
+  }
+  if (removeLegacy) for (const n of LEGACY_NAMES) {
+    const old = path.join(app.getPath('appData'), n);
+    if (old === dir || !fs.existsSync(old)) continue;
+    for (const f of fs.readdirSync(old)) if (/\.(json|bin)$/.test(f) || /\.json\./.test(f)) { try { fs.unlinkSync(path.join(old, f)); } catch {} }
+  }
+}
+
+ipcMain.handle('lock:state', () => ({ configured: !!vault, locked: !!vault && !dataKey, hint: vault ? vault.hint || '' : '', wait: Math.max(0, nextTry - Date.now()), recovered: recoveredSession, hasLegacy: LEGACY_NAMES.some(n => { const o = path.join(app.getPath('appData'), n); return o !== dataDir() && fs.existsSync(o) && fs.readdirSync(o).some(f => /\.json$/.test(f)); }) }));
+
+ipcMain.handle('lock:unlock', async (_e, { secret, recovery }) => {
+  if (!vault) return { ok: true };
+  if (dataKey) return { ok: true };
+  const wait = nextTry - Date.now();
+  if (wait > 0) return { ok: false, wait, error: 'Troppi tentativi: riprova tra poco.' };
+  const key = await vaultLib.unlock(vault, secret || '', !!recovery);
+  if (!key) {
+    failures++;
+    if (failures >= 3) nextTry = Date.now() + Math.min(60, 2 ** (failures - 3)) * 1000;
+    return { ok: false, wait: Math.max(0, nextTry - Date.now()), error: recovery ? 'Chiave di recupero non valida.' : 'Password errata.' };
+  }
+  failures = 0; nextTry = 0;
+  dataKey = key;
+  recoveredSession = !!recovery;
+  try { data = loadData(); } catch (e) { dataKey = null; return { ok: false, error: 'Impossibile leggere i dati: ' + e.message }; }
+  secrets = null;
+  startServices();
+  return { ok: true, recovered: recoveredSession };
+});
+
+ipcMain.handle('lock:setup', async (_e, { password, hint, removeLegacy }) => {
+  if (vault) return { ok: false, error: 'La protezione è già attiva.' };
+  if (!data) return { ok: false, error: 'Dati non disponibili.' };
+  if (!isStrong(password)) return { ok: false, error: 'Usa almeno 8 caratteri.' };
+  const plainSecrets = { ...loadSecrets() };
+  delete data.settings.lockDeclined;
+  const r = await vaultLib.create(password, hint);
+  vault = r.header; dataKey = r.dataKey;
+  writeVault(vault);
+  saveData(data);
+  secrets = plainSecrets; saveSecrets();
+  removePlainCopies(!!removeLegacy);
+  return { ok: true, recovery: r.recovery };
+});
+
+ipcMain.handle('lock:change', async (_e, { current, next, hint }) => {
+  if (!vault || !dataKey) return { ok: false, error: 'Protezione non attiva.' };
+  if (!isStrong(next)) return { ok: false, error: 'La nuova password deve avere almeno 8 caratteri.' };
+  if (!recoveredSession) {
+    const k = await vaultLib.unlock(vault, current || '');
+    if (!k) return { ok: false, error: 'La password attuale non è corretta.' };
+  }
+  vault = await vaultLib.setPassword(vault, dataKey, next, hint);
+  writeVault(vault);
+  recoveredSession = false;
+  return { ok: true };
+});
+
+ipcMain.handle('lock:remove', async (_e, { current }) => {
+  if (!vault || !dataKey) return { ok: false, error: 'Protezione non attiva.' };
+  const k = await vaultLib.unlock(vault, current || '');
+  if (!k) return { ok: false, error: 'Password non corretta.' };
+  const sec = { ...loadSecrets() };
+  vault = null; dataKey = null; secrets = sec;
+  saveData(data); saveSecrets();
+  for (const f of [vaultFile(), encFile(), secretsEnc()]) { try { fs.unlinkSync(f); } catch {} }
+  return { ok: true };
+});
+
+let servicesStarted = false;
+function startServices() {
+  if (servicesStarted) return;
+  servicesStarted = true;
+  checkReminders();
+  setInterval(checkReminders, 20 * 1000);
+  setTimeout(() => sync.syncAll(), 3000);
+  setInterval(() => { if (data) sync.syncAll(); }, Math.max(5, data.settings.syncMinutes || 15) * 60000);
+  require('electron').powerMonitor.on('resume', () => setTimeout(() => { if (data) sync.syncAll(); }, 8000));
+}
 
 // ---------- Ciclo di vita ----------
 if (!app.requestSingleInstanceLock()) {
@@ -326,14 +442,13 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     app.setAppUserModelId('it.danieledemichele.promemo');
     migrateLegacy();
-    data = loadData();
+    vault = readVault();
+    if (!vault) data = loadData();
+    // con la protezione attiva la finestra si apre sempre (serve la password), anche con --hidden
+    if (vault && process.argv.includes('--hidden')) process.argv.splice(process.argv.indexOf('--hidden'), 1);
     createWindow();
     createTray();
-    checkReminders();
-    setInterval(checkReminders, 20 * 1000);
-    setTimeout(() => sync.syncAll(), 3000);
-    setInterval(() => sync.syncAll(), Math.max(5, data.settings.syncMinutes || 15) * 60000);
-    require('electron').powerMonitor.on('resume', () => setTimeout(() => sync.syncAll(), 8000));
+    if (data) startServices();
   });
   app.on('before-quit', () => { quitting = true; });
   app.on('window-all-closed', () => { if (!tray) app.quit(); });
