@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage, dial
 const { createSync } = require('./sync');
 const vaultLib = require('./vault');
 const aiLib = require('./ai');
+const { createBackup } = require('./backup');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -291,6 +292,7 @@ ipcMain.handle('data:set', (_e, d) => {
   const prevAuto = data.settings.autostart;
   const r = sync.reconcile(data, d);
   data = r.data; saveData(data);
+  markDirty();
   if (r.needsPush) schedulePush();
   if (prevAuto !== data.settings.autostart) setAutostart(data.settings.autostart);
   checkReminders();
@@ -400,6 +402,90 @@ ipcMain.handle('ls:image-clear', () => {
   return lsFull();
 });
 
+// ---------- Backup ----------
+const backup = createBackup({
+  data: () => data,
+  commit,
+  secret: (k) => loadSecrets()[k],
+  setSecret: (k, v) => { loadSecrets()[k] = v; saveSecrets(); },
+  lockscreen: () => readLs(),
+  status: (st) => { if (win) win.webContents.send('backup-status', st); },
+  openExternal: (url) => process.env.TRAMA_TEST_AUTH ? null : shell.openExternal(url),
+});
+const bkCfg = () => (data && data.settings.backup) || {};
+let bkTimer = null;
+function markDirty() {
+  const b = bkCfg();
+  if (!b.enabled) return;
+  b.dirty = true;
+  if ((b.auto || 'change') !== 'change') return;
+  clearTimeout(bkTimer);
+  bkTimer = setTimeout(() => backup.backupNow('automatico').catch(() => {}), (+b.delayMin || 10) * 60000);
+}
+function backupTick() {
+  const b = bkCfg();
+  if (!data || !b.enabled || b.auto === 'manual') return;
+  const old = !b.lastAt || Date.now() - new Date(b.lastAt).getTime() > 24 * 3600 * 1000;
+  if (old && (b.dirty || !b.lastAt)) backup.backupNow('giornaliero').catch(() => {});
+}
+async function remoteCheck() {
+  if (!data) return;
+  try { const r = await backup.checkRemote(); if (r && win) win.webContents.send('backup-remote', r); } catch { /* offline */ }
+}
+const PROTECTED = ['lockDeclined', 'backup', 'ai'];
+async function applyRestore(payload, label) {
+  // copia di sicurezza dello stato attuale prima di sostituirlo
+  try {
+    const p = loadSecrets()['backup:pass'];
+    if (p) {
+      const dir = path.join(dataDir(), 'prima-dei-ripristini'); fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `prima-del-ripristino-${Date.now()}.pmbak`), await backup.pack(backup.payload(), p));
+      const olds = fs.readdirSync(dir).sort().reverse(); for (const f of olds.slice(5)) fs.unlinkSync(path.join(dir, f));
+    }
+  } catch (e) { console.error('copia di sicurezza', e); }
+  const d = payload.data;
+  if (!d || !Array.isArray(d.projects) || !Array.isArray(d.events)) throw new Error('Il backup non contiene dati validi.');
+  const keepAcc = data.accounts, keepSet = {}; for (const k of PROTECTED) if (k in data.settings) keepSet[k] = data.settings[k];
+  const accIds = new Set(keepAcc.map(a => a.id));
+  for (const e of d.events) { if (e.source && !accIds.has(e.source.acc)) delete e.source; if (e.pushTo && !accIds.has(e.pushTo.acc)) delete e.pushTo; }
+  d.accounts = keepAcc; d.pendingDeletes = data.pendingDeletes || [];
+  d.settings = { ...(d.settings || {}), ...keepSet };
+  d.settings.backup = { ...(d.settings.backup || {}), restoredFrom: label, lastRestoreAt: new Date().toISOString() };
+  normalize(d); d.rev = (data.rev || 0) + 1;
+  data = d;
+  if (payload.lockscreen) { try { const ls = readLs(); writeLs({ ...payload.lockscreen, image: ls.image, bg: payload.lockscreen.bg === 'immagine' && !ls.image ? 'aurora' : payload.lockscreen.bg }); } catch {} }
+  commit();
+  return true;
+}
+ipcMain.handle('bk:now', wrap(() => backup.backupNow('manuale')));
+ipcMain.handle('bk:list', wrap(() => backup.listBackups()));
+ipcMain.handle('bk:test', wrap((c) => backup.test(c)));
+ipcMain.handle('bk:dbx-start', wrap((k) => backup.dropboxStart(k)));
+ipcMain.handle('bk:dbx-finish', wrap((code) => backup.dropboxFinish(code)));
+ipcMain.handle('bk:pass', wrap(({ pass, old }) => backup.savePass(pass, old)));
+ipcMain.handle('bk:secret', wrap(({ key, value }) => { if (!['backup:webdav'].includes(key)) throw new Error('chiave non ammessa'); const s = loadSecrets(); if (value) s[key] = value; else delete s[key]; saveSecrets(); return true; }));
+ipcMain.handle('bk:status', () => { if (!data) return {}; const s = loadSecrets(); return { hasPass: !!s['backup:pass'], hasDropbox: !!(s['backup:dropbox'] && s['backup:dropbox'].refresh_token), hasWebdav: !!s['backup:webdav'] }; });
+ipcMain.handle('bk:restore', wrap(async ({ name, file, password }) => {
+  const r = file ? await backup.unpack(fs.readFileSync(file), password || loadSecrets()['backup:pass'] || '') : await backup.readBackup(name, password);
+  return applyRestore(r.payload, name || path.basename(file));
+}));
+ipcMain.handle('bk:peek-file', wrap(async () => {
+  const { filePaths } = await dialog.showOpenDialog(win, { title: 'Ripristina da file', filters: [{ name: 'Backup di Promemo', extensions: ['pmbak'] }], properties: ['openFile'] });
+  if (!filePaths || !filePaths[0]) return null;
+  const { header } = backup.readHeader(fs.readFileSync(filePaths[0]));
+  return { file: filePaths[0], header };
+}));
+ipcMain.handle('bk:dismiss', (_e, name) => { if (!data) return; data.settings.backup = { ...bkCfg(), dismissed: name }; commit(); });
+ipcMain.handle('bk:choose-folder', async () => {
+  const { filePaths } = await dialog.showOpenDialog(win, { title: 'Cartella per i backup', properties: ['openDirectory', 'createDirectory'] });
+  return filePaths && filePaths[0] ? filePaths[0] : null;
+});
+ipcMain.handle('bk:detect', () => {
+  const h = os.homedir();
+  const c = [['MEGA', 'MEGA'], ['MEGAsync', 'MEGA'], ['Dropbox', 'Dropbox'], ['Nextcloud', 'Nextcloud'], ['ownCloud', 'ownCloud'], ['OneDrive', 'OneDrive'], ['Google Drive', 'Google Drive'], ['GoogleDrive', 'Google Drive'], ['pCloudDrive', 'pCloud'], ['Sync', 'Syncthing'], ['kDrive', 'kDrive']];
+  return c.map(([d, n]) => ({ path: path.join(h, d), name: n })).filter(x => { try { return fs.statSync(x.path).isDirectory(); } catch { return false; } });
+});
+
 // ---------- Assistente IA ----------
 ipcMain.handle('ai:chat', async (_e, { system, messages }) => {
   if (!data) return { ok: false, error: 'Promemo è bloccata' };
@@ -500,7 +586,11 @@ function startServices() {
   setInterval(checkReminders, 20 * 1000);
   setTimeout(() => sync.syncAll(), 3000);
   setInterval(() => { if (data) sync.syncAll(); }, Math.max(5, data.settings.syncMinutes || 15) * 60000);
-  require('electron').powerMonitor.on('resume', () => setTimeout(() => { if (data) sync.syncAll(); }, 8000));
+  require('electron').powerMonitor.on('resume', () => setTimeout(() => { if (data) sync.syncAll(); remoteCheck(); }, 8000));
+  setTimeout(remoteCheck, 6000);
+  setInterval(remoteCheck, 30 * 60000);
+  setInterval(backupTick, 60 * 60000);
+  setTimeout(backupTick, 60000);
 }
 
 // ---------- Ciclo di vita ----------
@@ -519,6 +609,15 @@ if (!app.requestSingleInstanceLock()) {
     createTray();
     if (data) startServices();
   });
-  app.on('before-quit', () => { quitting = true; });
+  let finalBackupDone = false;
+  app.on('before-quit', (e) => {
+    quitting = true;
+    const b = bkCfg();
+    if (finalBackupDone || !data || !b.enabled || !b.dirty || b.auto === 'manual') return;
+    e.preventDefault();
+    finalBackupDone = true;
+    clearTimeout(bkTimer);
+    Promise.race([backup.backupNow('chiusura').catch(() => {}), new Promise(r => setTimeout(r, 15000))]).then(() => app.quit());
+  });
   app.on('window-all-closed', () => { if (!tray) app.quit(); });
 }

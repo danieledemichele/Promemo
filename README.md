@@ -25,6 +25,25 @@ Promemo può chiedere una password a ogni apertura (*Impostazioni → Password a
 - Finché Promemo è bloccata non può inviare notifiche né sincronizzare: dopo lo sblocco resta attiva (anche nell'area di notifica) fino all'uscita.
 - I backup esportati in JSON non sono cifrati.
 
+## Scheda del compito (Agenda)
+Un clic su un compito o su un evento, nelle viste Giorno, Settimana o Mese, apre a destra una scheda con:
+- **compito**: titolo modificabile, fatto/da fare, progetto e raccolta, scadenza, durata stimata (determina l'altezza del blocco nella settimana), promemoria, priorità, **sotto-attività** con barra di avanzamento, **note** con salvataggio automatico (si possono copiare nella timeline del progetto) e gli altri passi del progetto;
+- **evento**: orario, luogo (con link se è online), calendario, progetto, promemoria, partecipanti (da Calendly), descrizione e **appunti personali** che restano solo sul computer e non vengono inviati a Google/Notion.
+
+## Backup e sincronizzazione tra computer
+*Impostazioni → Dati e backup*. I backup sono file `.pmbak` **cifrati** (AES-256-GCM, chiave derivata con scrypt da una password dei backup) e non contengono mai token o password degli account.
+
+| Destinazione | Servizi |
+|---|---|
+| Cartella sincronizzata | MEGA (MEGA Desktop), Dropbox, Nextcloud, ownCloud, Google Drive, OneDrive, pCloud, Syncthing… (cartelle rilevate in automatico) |
+| Dropbox diretto | API Dropbox con una tua *App key* (accesso “App folder”, collegamento con codice PKCE) |
+| WebDAV | Nextcloud, ownCloud, Koofr, kDrive, Box, NAS |
+| rclone | MEGA, Google Drive, OneDrive, pCloud, Proton Drive, S3 e altri ~70 servizi |
+
+- Frequenza: dopo le modifiche (con attesa regolabile e sempre alla chiusura), una volta al giorno o solo a mano; versioni conservate a scelta.
+- **Ripristino** da elenco delle versioni o da file; prima di sostituire i dati viene salvata una copia di sicurezza locale. Account collegati, password e impostazioni dei backup restano quelli del computer.
+- **Sincronizza tra computer**: se un altro PC ha salvato una versione più recente nella stessa destinazione, compare un avviso con *Aggiorna*/*Ignora*.
+
 ## Assistente (IA)
 Nella Home e con il pulsante **Assistente** (Ctrl+J) si apre una conversazione che organizza la giornata di oggi o di domani:
 1. l'assistente legge impegni del giorno, passi in ritardo e scadenze vicine;
@@ -88,8 +107,8 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.6.0.AppImage e dist/trama_1.6.0_amd64.deb
-sudo apt install ./dist/trama_1.6.0_amd64.deb
+npm run dist        # dist/Promemo-1.7.0.AppImage e dist/trama_1.7.0_amd64.deb
+sudo apt install ./dist/trama_1.7.0_amd64.deb
 ```
 
 ## Scorciatoie
@@ -108,6 +127,7 @@ Al primo avvio i dati vengono copiati dalla cartella del vecchio nome. Gli accou
 ## Struttura
 ```
 main.js        processo principale: archivio, promemoria, vassoio, IPC
+backup.js      backup cifrati e destinazioni (cartella, Dropbox, WebDAV, rclone)
 ai.js          motori IA (Anthropic, Ollama, compatibili OpenAI)
 vault.js       cifratura locale (scrypt + AES-256-GCM, chiave di recupero)
 sync.js        Google Calendar (OAuth PKCE), Notion API, feed .ics; unione e invio modifiche

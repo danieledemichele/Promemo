@@ -166,7 +166,7 @@ function eventCard(e, opts = {}) {
     ? `<div>${fmtDM(s)}</div><div>Tutto il giorno</div>${days > 1 ? `<div class="end">${fmtDM(en)}</div>` : ''}`
     : `<div>${fmtDM(s)}</div><div>${fmtHM(s)}</div><div class="end">${days > 1 ? fmtDM(en) + '<br>' : ''}${fmtHM(en)}</div>`;
   return `
-  <div class="card clickable accent-left ev kind-${e.kind} tinted" style="--gc:${esc(groupInfo(e).color)}" data-action="edit-event" data-id="${e.id}">
+  <div class="card clickable accent-left ev kind-${e.kind} tinted ${opts.sheet && ui.sheet && ui.sheet.id === e.id ? 'sheet-on' : ''}" style="--gc:${esc(groupInfo(e).color)}" ${opts.sheet ? `data-action="sheet" data-kind="ev" data-id="${e.id}"` : `data-action="edit-event" data-id="${e.id}"`}>
     <div class="ev-time">${timeCol}</div>
     <div style="min-width:0">
       <div class="ev-kind">
@@ -187,11 +187,11 @@ function eventCard(e, opts = {}) {
 }
 const remShort = (m) => m === 0 ? "all'ora" : m < 60 ? `${m} min` : m < 1440 ? `${m / 60} h` : `${m / 1440} g`;
 
-function stepCard(st, p) {
+function stepCard(st, p, sheet) {
   const d = parse(st.due);
   const late = !st.done && d < new Date();
   return `
-  <div class="card clickable accent-left ev kind-passo tinted" style="--gc:${esc(localGroup(p).color)}" data-action="open-project" data-id="${p.id}">
+  <div class="card clickable accent-left ev kind-passo tinted ${sheet && ui.sheet && ui.sheet.id === st.id ? 'sheet-on' : ''}" style="--gc:${esc(localGroup(p).color)}" ${sheet ? `data-action="sheet" data-kind="st" data-pid="${p.id}" data-id="${st.id}"` : `data-action="open-project" data-id="${p.id}"`}>
     <div class="ev-time"><div>${fmtDM(d)}</div><div>${fmtHM(d)}</div></div>
     <div style="min-width:0">
       <div class="ev-kind"><span class="ev-kind-label">Passo</span>${st.done ? '<span class="pill ok">Fatto</span>' : late ? '<span class="pill live">In ritardo</span>' : ''}</div>
@@ -685,7 +685,7 @@ function viewTimeGrid(days) {
     const its = itemsOn(d, ui.chips).filter(it => !(it.ev && (it.ev.allDay || spanDays(it.ev) > 1)));
     const ds = startOfDay(d);
     const list = layoutDay(its.map(it => {
-      const s0 = itemStart(it), e0 = it.ev ? itemEnd(it) : new Date(s0.getTime() + 30 * 60000);
+      const s0 = itemStart(it), e0 = it.ev ? itemEnd(it) : new Date(s0.getTime() + (+it.step.duration || 30) * 60000);
       const s = s0 < ds ? 0 : mins(s0);
       const e = e0 > addDays(ds, 1) ? 1440 : Math.max(s + 15, mins(e0) || 1440);
       return { it, s, e };
@@ -695,10 +695,10 @@ function viewTimeGrid(days) {
       const top = s / 60 * HOUR_H, h = Math.max(20, (e - s) / 60 * HOUR_H - 2);
       const edit = canEdit(it);
       const id = it.ev ? it.ev.id : it.step.id;
-      return `<div class="tg-ev ${past ? 'past' : ''} ${h < 34 ? 'short' : ''} ${it.step ? 'step' : ''} ${it.step && it.step.done ? 'done' : ''} ${edit ? 'editable' : 'ro'}" style="top:${top}px;height:${h}px;left:calc(${col / n * 100}% + 1px);width:calc(${100 / n}% - 4px);--gc:${esc(itemColor(it))}"
+      return `<div class="tg-ev ${ui.sheet && ui.sheet.id === id ? 'sheet-on' : ''} ${past ? 'past' : ''} ${h < 34 ? 'short' : ''} ${it.step ? 'step' : ''} ${it.step && it.step.done ? 'done' : ''} ${edit ? 'editable' : 'ro'}" style="top:${top}px;height:${h}px;left:calc(${col / n * 100}% + 1px);width:calc(${100 / n}% - 4px);--gc:${esc(itemColor(it))}"
         data-kind="${it.ev ? 'ev' : 'st'}" data-id="${id}" ${it.step ? `data-pid="${it.project.id}"` : ''} data-date="${dayKey(d)}" data-s="${s}" data-e="${e}">
         <div class="tg-ev-t">${it.step ? (it.step.done ? '✓ ' : '◯ ') : ''}${esc(itemTitle(it))}</div>
-        <div class="tg-ev-time">${fmtHM(itemStart(it))}${it.ev ? '–' + fmtHM(itemEnd(it)) : ''}${it.ev && it.ev.location ? ' · ' + esc(it.ev.location) : ''}</div>
+        <div class="tg-ev-time">${fmtHM(itemStart(it))}${it.ev ? '–' + fmtHM(itemEnd(it)) : it.step.duration ? ' · ' + it.step.duration + ' min' : ''}${it.ev && it.ev.location ? ' · ' + esc(it.ev.location) : ''}</div>
         ${edit && it.ev ? '<i class="tg-rs"></i>' : ''}
       </div>`;
     }).join('');
@@ -728,7 +728,7 @@ function viewAgenda() {
     else { const ws = weekStartOf(sel); days = [...Array(7)].map((_, i) => addDays(ws, i)); if (data.settings.hideWeekend) days = days.slice(0, 5); }
     const a = days[0], b = days[days.length - 1];
     const title = mode === 'giorno' ? sel.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }) : (a.getMonth() === b.getMonth() ? fmtMonth(a) : `${MESI[a.getMonth()]} – ${MESI[b.getMonth()]} ${b.getFullYear()}`);
-    return `<div class="agenda tgwrap">${agendaToolbar(title, mode === 'settimana' ? `Settimana ${isoWeek(sel)}` : relDay(sel) === 'Oggi' ? 'Oggi' : '')}${viewTimeGrid(days)}</div>`;
+    return `<div class="agenda tgwrap">${agendaToolbar(title, mode === 'settimana' ? `Settimana ${isoWeek(sel)}` : relDay(sel) === 'Oggi' ? 'Oggi' : '')}<div class="tg-row">${viewTimeGrid(days)}${typeof sheetHTML === 'function' ? sheetHTML() : ''}</div></div>`;
   }
   const m = ui.month;
   const first = new Date(m.getFullYear(), m.getMonth(), 1);
@@ -762,15 +762,15 @@ function viewAgenda() {
         </div>
       </div>
     </div>
-    <aside class="day-side">
+    ${typeof sheetHTML === 'function' && ui.sheet ? sheetHTML() : `<aside class="day-side">
       <div class="day-side-head">
         <div class="day-big"><b>${selD.getDate()}</b><span>${selD.toLocaleDateString('it-IT', { weekday: 'long' })}<small>${relDay(selD) === 'Oggi' || relDay(selD) === 'Domani' ? relDay(selD) + ' · ' : ''}${its.length} ${its.length === 1 ? 'elemento' : 'elementi'}</small></span></div>
         <button class="icon-btn round" data-action="new-event" data-date="${ui.sel}" title="Nuovo evento">${icon('i-plus')}</button>
       </div>
       <div class="stack">
-        ${its.length ? its.map(it => it.ev ? eventCard(it.ev, { showCat: true }) : stepCard(it.step, it.project)).join('') : `<div class="empty"><b>Niente in programma</b>Fai clic su un giorno del calendario per aggiungere un evento.</div>`}
+        ${its.length ? its.map(it => it.ev ? eventCard(it.ev, { showCat: true, sheet: true }) : stepCard(it.step, it.project, true)).join('') : `<div class="empty"><b>Niente in programma</b>Fai clic su un giorno del calendario per aggiungere un evento.</div>`}
       </div>
-    </aside>
+    </aside>`}
   </div>`;
 }
 
@@ -1018,7 +1018,13 @@ function viewSearch() {
   </div>`;
 }
 
+let rendering = false;
 function render() {
+  if (rendering) return; // evita ridisegni annidati (es. eventi di blur durante la sostituzione del contenuto)
+  rendering = true;
+  try { renderNow(); } finally { rendering = false; }
+}
+function renderNow() {
   applySidebar();
   renderSidebar();
   const v = $('#view');
@@ -1205,7 +1211,7 @@ function openDayPopover(dateKey, opts = {}) {
     </div>
     ${its.length ? `<div class="pop-list">${its.map(it => it.ev
       ? `<button class="pop-item" data-action="edit-event" data-id="${it.ev.id}"><i style="background:${esc(groupInfo(it.ev).color)}"></i><span class="grow">${esc(it.ev.title)}</span><span class="tiny">${it.ev.allDay ? 'Giorno' : fmtHM(parse(it.ev.start))}</span></button>`
-      : `<button class="pop-item" data-action="open-project" data-id="${it.project.id}"><i style="background:${esc(localGroup(it.project).color)}"></i><span class="grow">${esc(it.step.text)}</span><span class="tiny">${fmtHM(parse(it.step.due))}</span></button>`).join('')}
+      : `<button class="pop-item" data-action="sheet" data-kind="st" data-pid="${it.project.id}" data-id="${it.step.id}"><i style="background:${esc(localGroup(it.project).color)}"></i><span class="grow">${esc(it.step.text)}</span><span class="tiny">${fmtHM(parse(it.step.due))}</span></button>`).join('')}
 </div>` : ''}
     <div class="pop-label">Nuovo evento</div>
     ${eventFormHTML(null, { date: dateKey, start: opts.start, end: opts.end }, true)}
@@ -1353,8 +1359,7 @@ function initTimeGrid() {
     }
     const el = d.el;
     if (!d.moved) { // semplice clic: apri
-      if (el.dataset.kind === 'ev') modalEvent(data.events.find(x => x.id === el.dataset.id));
-      else go('progetti', { projectId: el.dataset.pid, projFilter: 'attivi', catFilter: null });
+      openSheet(el.dataset.kind === 'ev' ? { kind: 'ev', id: el.dataset.id } : { kind: 'st', pid: el.dataset.pid, id: el.dataset.id });
       return;
     }
     const dk = dayKey(addDays(parse(el.dataset.date), d.dday || 0));
@@ -1946,7 +1951,7 @@ document.querySelector('.toolbar').addEventListener('dblclick', (e) => { if (e.t
 window.addEventListener('blur', () => document.body.classList.add('blurred'));
 window.addEventListener('focus', () => document.body.classList.remove('blurred'));
 
-api.onDataChanged((d) => { if (dirty) return; data = d; render(); });
+api.onDataChanged((d) => { if (dirty) return; data = d; if (document.activeElement?.closest('#sheet textarea, #sheet [contenteditable], .ai-drawer input')) return; render(); });
 api.onSyncStatus((st) => { syncing = !!st.syncing; renderSyncButton(); if (ui.view === 'account' && $('#modal-backdrop').hidden) render(); });
 api.onNavigate((r) => {
   if (r.action === 'new') return modalNew();

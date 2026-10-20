@@ -65,4 +65,4 @@ async function setPassword(header, dataKey, password, hint) {
   return { ...header, kdf: KDF, saltPw: b64(saltPw), wrapPw: b64(seal(kp, dataKey)), hint: hint === undefined ? header.hint : String(hint || '').slice(0, 80), changedAt: new Date().toISOString() };
 }
 
-module.exports = { create, unlock, setPassword, seal, open, recoveryCode };
+module.exports = { create, unlock, setPassword, seal, open, recoveryCode, kdf };
