@@ -52,5 +52,7 @@ contextBridge.exposeInMainWorld('promemo', {
   bkDetect: () => ipcRenderer.invoke('bk:detect'),
   onBackupStatus: (cb) => ipcRenderer.on('backup-status', (_e, s) => cb(s)),
   onBackupRemote: (cb) => ipcRenderer.on('backup-remote', (_e, s) => cb(s)),
+  wxGet: (a) => ipcRenderer.invoke('wx:get', a),
+  wxSearch: (q) => ipcRenderer.invoke('wx:search', q),
   onMaximized: (cb) => ipcRenderer.on('maximized', (_e, v) => cb(v)),
 });

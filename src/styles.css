@@ -1055,3 +1055,53 @@ body { background:
 .sh-foot .grow { flex: 1; }
 .tg-ev.sheet-on { box-shadow: 0 0 0 2px var(--gc), 0 6px 16px -6px rgba(0,0,0,.3); z-index: 5; }
 .card.sheet-on { box-shadow: 0 0 0 2px var(--gc), var(--shadow); }
+
+/* ---------- Meteo ---------- */
+.wx-btn { display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 12px 0 8px; border-radius: 17px; border: 1px solid var(--hair); background: var(--panel); box-shadow: var(--shadow); font-weight: 600; font-size: 13px; color: var(--text); backdrop-filter: blur(20px); }
+.wx-btn[hidden] { display: none; }
+.wx-btn:hover { filter: brightness(1.03); }
+.wx-btn .wx-ph { width: 20px; text-align: center; color: var(--text-3); }
+.wx-svg { flex: none; overflow: visible; }
+.wx-pop { width: 380px; padding: 14px 16px 12px; border-radius: 18px; }
+.wx-pop .icon-btn.spin svg { animation: spin .8s linear infinite; }
+.wx-head { display: flex; align-items: center; gap: 4px; }
+.wx-head b { font-size: 15px; }
+.wx-head small { display: block; color: var(--text-2); font-size: 12px; }
+.wx-head .grow { flex: 1; }
+.wx-now { display: flex; align-items: center; gap: 12px; margin: 8px 0 10px; }
+.wx-temp { font-size: 46px; font-weight: 300; letter-spacing: -.04em; line-height: 1; font-variant-numeric: tabular-nums; }
+.wx-desc b { display: block; font-size: 14px; }
+.wx-desc small { color: var(--text-2); font-size: 12px; }
+.wx-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.wx-chips span { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-2); background: var(--fill-2); border-radius: 9px; padding: 3px 8px; }
+.wx-chips svg { width: 13px; height: 13px; }
+.wx-sec { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); margin: 12px 0 6px; }
+.wx-hours { display: flex; gap: 2px; overflow-x: auto; padding-bottom: 4px; }
+.wx-h { flex: none; width: 44px; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 0; border-radius: 10px; }
+.wx-h:first-child { background: var(--fill-2); }
+.wx-h small { font-size: 11px; color: var(--text-2); }
+.wx-h b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.wx-h em { font-style: normal; font-size: 10px; color: #228be6; font-weight: 600; }
+.wx-days { display: flex; flex-direction: column; gap: 2px; }
+.wx-d { display: grid; grid-template-columns: 40px 26px 34px 30px 1fr 30px; align-items: center; gap: 6px; padding: 3px 0; font-size: 13px; }
+.wx-dn { font-weight: 600; }
+.wx-p { font-size: 11px; color: #228be6; font-weight: 600; }
+.wx-mn { color: var(--text-2); text-align: right; font-variant-numeric: tabular-nums; }
+.wx-mx { font-weight: 600; font-variant-numeric: tabular-nums; }
+.wx-bar { position: relative; height: 5px; border-radius: 3px; background: var(--fill-2); }
+.wx-bar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: linear-gradient(90deg, #74c0fc, #ffd43b 55%, #ff922b); }
+.wx-foot { margin-top: 10px; font-size: 11px; color: var(--text-3); text-align: right; }
+.wx-place { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent; padding: 7px 6px; border-radius: 8px; text-align: left; }
+.wx-place:hover { background: var(--fill-2); }
+.wx-place svg { width: 14px; height: 14px; color: var(--accent); }
+.wx-place small { color: var(--text-2); }
+.tg-wx { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; font-weight: 600; color: var(--text-2); margin-left: 4px; }
+.hero { display: flex; flex-direction: row-reverse; align-items: center; justify-content: space-between; gap: 16px; }
+.wx-hero { display: flex; align-items: center; gap: 10px; border: 1px solid var(--hair); background: var(--panel); border-radius: 18px; padding: 8px 16px 8px 10px; box-shadow: var(--shadow); text-align: left; backdrop-filter: blur(20px); }
+.wx-hero:hover { transform: translateY(-1px); box-shadow: var(--shadow-hover); }
+.wx-hero b { font-size: 26px; font-weight: 300; letter-spacing: -.03em; display: block; line-height: 1.05; }
+.wx-hero small { display: block; font-size: 12px; color: var(--text-2); }
+.wx-pop .icon-btn { width: 30px; height: 30px; padding: 0; justify-content: center; flex: none; }
+.wx-pop .icon-btn svg { color: var(--text-2); }
+.wx-pop .icon-btn:hover { background: var(--fill-2); color: var(--text); }
+.wx-pop .icon-btn:hover svg { color: var(--text); }

@@ -443,6 +443,7 @@ function viewHome() {
 
   return `
   <section class="hero">
+    ${typeof wxHeroHTML === 'function' ? wxHeroHTML() : ''}
     <div>
       <div class="eyebrow">${fmtLong(now)}</div>
       <h1 class="display">${greet}${name ? ', ' + esc(name) : ''}.</h1>
@@ -671,7 +672,7 @@ function canEdit(it) {
 function viewTimeGrid(days) {
   const now = new Date();
   const mins = (d) => d.getHours() * 60 + d.getMinutes();
-  const head = days.map(d => `<button class="tg-hd ${sameDay(d, now) ? 'today' : ''} ${d < startOfDay(now) ? 'past' : ''}" data-action="cal-day" data-date="${dayKey(d)}"><span class="tg-dn">${d.toLocaleDateString('it-IT', { weekday: 'short' }).replace('.', '')}</span><span class="tg-num">${d.getDate()}</span></button>`).join('');
+  const head = days.map(d => `<button class="tg-hd ${sameDay(d, now) ? 'today' : ''} ${d < startOfDay(now) ? 'past' : ''}" data-action="cal-day" data-date="${dayKey(d)}"><span class="tg-dn">${d.toLocaleDateString('it-IT', { weekday: 'short' }).replace('.', '')}</span><span class="tg-num">${d.getDate()}</span>${typeof wxDay === 'function' && wxCfg().headers !== false ? (() => { const w = wxDay(dayKey(d)); return w ? `<span class="tg-wx" title="${esc(wxInfo(w.code)[0])} · min ${Math.round(w.min)}°">${wxIcon(w.code, true, 16)}${Math.round(w.max)}°</span>` : ''; })() : ''}</button>`).join('');
   let hasAll = false;
   const allRow = days.map(d => {
     const its = itemsOn(d, ui.chips).filter(it => it.ev && (it.ev.allDay || spanDays(it.ev) > 1));
@@ -2112,7 +2113,6 @@ function showSetup(fromSettings) {
         <div class="meter"><i id="su-meter"></i></div>
         <input id="su-pw2" type="password" placeholder="Ripeti la password" class="lock-input">
         <input id="su-hint" type="text" placeholder="Suggerimento (facoltativo, visibile a chiunque)" class="lock-input" maxlength="80">
-        ${lockInfo.hasLegacy ? `<label class="lock-check"><input type="checkbox" id="su-legacy" checked> Elimina la copia non cifrata lasciata dalla versione precedente</label>` : ''}
       </div>
       <div class="lock-msg" id="su-msg"></div>
       <div class="lock-actions">
@@ -2135,7 +2135,7 @@ function showSetup(fromSettings) {
     if (pw.value !== pw2.value) { msg.textContent = 'Le due password non coincidono.'; pw2.select(); return; }
     const btn = el.querySelector('#su-go'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Cifro i dati…';
     await new Promise(r => setTimeout(r, 200)); // lascia partire eventuali salvataggi in sospeso
-    const r = await api.lockSetup({ password: pw.value, hint: el.querySelector('#su-hint').value, removeLegacy: !!el.querySelector('#su-legacy')?.checked });
+    const r = await api.lockSetup({ password: pw.value, hint: el.querySelector('#su-hint').value });
     if (!r.ok) { btn.disabled = false; btn.textContent = 'Attiva protezione'; msg.textContent = r.error; return; }
     lockInfo = await api.lockState();
     showRecovery(r.recovery);

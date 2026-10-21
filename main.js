@@ -16,22 +16,6 @@ let quitting = false;
 
 // ---------- Archivio locale (JSON) ----------
 const dataDir = () => app.getPath('userData');
-// nome della cartella dati usato dalle prime versioni di sviluppo: al primo avvio i dati vengono recuperati da lì
-const LEGACY_NAMES = ['Trama'];
-function migrateLegacy() {
-  try {
-    const cur = dataDir();
-    if (fs.existsSync(path.join(cur, 'promemo.json')) || fs.existsSync(path.join(cur, 'promemo.vault.json'))) return;
-    for (const n of LEGACY_NAMES) {
-      const old = path.join(app.getPath('appData'), n);
-      if (old !== cur && fs.existsSync(path.join(old, LEGACY_NAMES[0].toLowerCase() + '.json'))) {
-        fs.mkdirSync(cur, { recursive: true });
-        for (const f of fs.readdirSync(old)) if (/\.(json|bin)$/.test(f)) fs.copyFileSync(path.join(old, f), path.join(cur, f.replace(/^[a-z]+(?=\.json$)/, 'promemo')));
-        return;
-      }
-    }
-  } catch (e) { console.error('migrazione', e); }
-}
 const dataFile = () => path.join(dataDir(), 'promemo.json');
 const vaultFile = () => path.join(dataDir(), 'promemo.vault.json');
 const encFile = () => path.join(dataDir(), 'promemo.enc');
@@ -486,6 +470,50 @@ ipcMain.handle('bk:detect', () => {
   return c.map(([d, n]) => ({ path: path.join(h, d), name: n })).filter(x => { try { return fs.statSync(x.path).isDirectory(); } catch { return false; } });
 });
 
+// ---------- Meteo (Open-Meteo, gratuito e senza account) ----------
+const WX_API = process.env.PROMEMO_WEATHER_API || 'https://api.open-meteo.com';
+const GEO_API = process.env.PROMEMO_GEO_API || 'https://geocoding-api.open-meteo.com';
+const WX_DEFAULT = { enabled: true, name: 'Cagliari', region: 'Sardegna, Italia', lat: 39.2238, lon: 9.1217, headers: true };
+let wxCache = null;
+async function getJson(url) {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 20000);
+  try {
+    const r = await fetch(url, { signal: ctl.signal });
+    const j = await r.json();
+    if (!r.ok || j.error) throw new Error(j.reason || `Errore ${r.status}`);
+    return j;
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'Il servizio meteo non risponde.' : e.cause ? 'Meteo non raggiungibile: sei offline?' : e.message); }
+  finally { clearTimeout(t); }
+}
+ipcMain.handle('wx:get', async (_e, { force } = {}) => {
+  if (!data) return { ok: false, error: 'bloccata' };
+  const w = { ...WX_DEFAULT, ...(data.settings.weather || {}) };
+  if (!w.enabled) return { ok: true, value: null };
+  const key = `${w.lat},${w.lon}`;
+  if (!force && wxCache && wxCache.key === key && Date.now() - wxCache.at < 30 * 60000) return { ok: true, value: wxCache.value };
+  const q = new URLSearchParams({
+    latitude: w.lat, longitude: w.lon, timezone: 'auto', forecast_days: '7',
+    current: 'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m',
+    hourly: 'temperature_2m,weather_code,precipitation_probability,is_day',
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset',
+  });
+  try {
+    const j = await getJson(`${WX_API}/v1/forecast?${q}`);
+    const value = { place: w.name, region: w.region, fetchedAt: new Date().toISOString(), current: j.current, hourly: j.hourly, daily: j.daily };
+    wxCache = { key, at: Date.now(), value };
+    return { ok: true, value };
+  } catch (e) {
+    if (wxCache && wxCache.key === key) return { ok: true, value: { ...wxCache.value, stale: true }, error: e.message };
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.handle('wx:search', async (_e, name) => {
+  try {
+    const j = await getJson(`${GEO_API}/v1/search?` + new URLSearchParams({ name: String(name || '').slice(0, 80), count: '8', language: 'it', format: 'json' }));
+    return { ok: true, value: (j.results || []).map(r => ({ name: r.name, region: [r.admin1, r.country].filter(Boolean).join(', '), lat: r.latitude, lon: r.longitude })) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 // ---------- Assistente IA ----------
 ipcMain.handle('ai:chat', async (_e, { system, messages }) => {
   if (!data) return { ok: false, error: 'Promemo è bloccata' };
@@ -505,19 +533,14 @@ ipcMain.handle('ai:defaults', () => aiLib.DEFAULTS);
 
 // ---------- IPC della cassaforte ----------
 const isStrong = (p) => typeof p === 'string' && p.length >= 8;
-function removePlainCopies(removeLegacy) {
+function removePlainCopies() {
   const dir = dataDir();
   for (const f of fs.readdirSync(dir)) {
     if (/^promemo\.json(\.tmp|\.corrotto-\d+|\.prima-import-\d+)?$/.test(f) || f === 'credenziali.bin') { try { fs.unlinkSync(path.join(dir, f)); } catch {} }
   }
-  if (removeLegacy) for (const n of LEGACY_NAMES) {
-    const old = path.join(app.getPath('appData'), n);
-    if (old === dir || !fs.existsSync(old)) continue;
-    for (const f of fs.readdirSync(old)) if (/\.(json|bin)$/.test(f) || /\.json\./.test(f)) { try { fs.unlinkSync(path.join(old, f)); } catch {} }
-  }
 }
 
-ipcMain.handle('lock:state', () => ({ lockscreen: lsFull(), configured: !!vault, locked: !!vault && !dataKey, hint: vault ? vault.hint || '' : '', wait: Math.max(0, nextTry - Date.now()), recovered: recoveredSession, hasLegacy: LEGACY_NAMES.some(n => { const o = path.join(app.getPath('appData'), n); return o !== dataDir() && fs.existsSync(o) && fs.readdirSync(o).some(f => /\.json$/.test(f)); }) }));
+ipcMain.handle('lock:state', () => ({ lockscreen: lsFull(), configured: !!vault, locked: !!vault && !dataKey, hint: vault ? vault.hint || '' : '', wait: Math.max(0, nextTry - Date.now()), recovered: recoveredSession }));
 
 ipcMain.handle('lock:unlock', async (_e, { secret, recovery }) => {
   if (!vault) return { ok: true };
@@ -539,7 +562,7 @@ ipcMain.handle('lock:unlock', async (_e, { secret, recovery }) => {
   return { ok: true, recovered: recoveredSession };
 });
 
-ipcMain.handle('lock:setup', async (_e, { password, hint, removeLegacy }) => {
+ipcMain.handle('lock:setup', async (_e, { password, hint }) => {
   if (vault) return { ok: false, error: 'La protezione è già attiva.' };
   if (!data) return { ok: false, error: 'Dati non disponibili.' };
   if (!isStrong(password)) return { ok: false, error: 'Usa almeno 8 caratteri.' };
@@ -550,7 +573,7 @@ ipcMain.handle('lock:setup', async (_e, { password, hint, removeLegacy }) => {
   writeVault(vault);
   saveData(data);
   secrets = plainSecrets; saveSecrets();
-  removePlainCopies(!!removeLegacy);
+  removePlainCopies();
   return { ok: true, recovery: r.recovery };
 });
 
@@ -600,7 +623,6 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', showWindow);
   app.whenReady().then(() => {
     app.setAppUserModelId('it.danieledemichele.promemo');
-    migrateLegacy();
     vault = readVault();
     if (!vault) data = loadData();
     // con la protezione attiva la finestra si apre sempre (serve la password), anche con --hidden

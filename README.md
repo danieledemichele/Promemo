@@ -25,6 +25,9 @@ Promemo può chiedere una password a ogni apertura (*Impostazioni → Password a
 - Finché Promemo è bloccata non può inviare notifiche né sincronizzare: dopo lo sblocco resta attiva (anche nell'area di notifica) fino all'uscita.
 - I backup esportati in JSON non sono cifrati.
 
+## Meteo
+Icona in alto a destra con la temperatura attuale; un clic apre condizioni, umidità, vento, alba e tramonto, le prossime 24 ore e i 7 giorni. Nella Home c'è un riquadro con la situazione di oggi e nelle viste Giorno/Settimana ogni giorno mostra icona e massima. La località si cambia in *Impostazioni → Meteo* (predefinita: Cagliari). Dati di [Open-Meteo](https://open-meteo.com), gratuiti e senza account.
+
 ## Scheda del compito (Agenda)
 Un clic su un compito o su un evento, nelle viste Giorno, Settimana o Mese, apre a destra una scheda con:
 - **compito**: titolo modificabile, fatto/da fare, progetto e raccolta, scadenza, durata stimata (determina l'altezza del blocco nella settimana), promemoria, priorità, **sotto-attività** con barra di avanzamento, **note** con salvataggio automatico (si possono copiare nella timeline del progetto) e gli altri passi del progetto;
@@ -107,8 +110,8 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.7.0.AppImage e dist/promemo_1.7.0_amd64.deb
-sudo apt install ./dist/promemo_1.7.0_amd64.deb
+npm run dist        # dist/Promemo-1.8.0.AppImage e dist/promemo_1.8.0_amd64.deb
+sudo apt install ./dist/promemo_1.8.0_amd64.deb
 ```
 
 ## Scorciatoie
