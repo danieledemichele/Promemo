@@ -4,6 +4,7 @@ const { createSync } = require('./sync');
 const vaultLib = require('./vault');
 const aiLib = require('./ai');
 const { createBackup } = require('./backup');
+const { createNotionDb } = require('./notiondb');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -274,6 +275,8 @@ ipcMain.handle('data:get', () => data);
 ipcMain.handle('data:set', (_e, d) => {
   if (!data) return null;
   const prevAuto = data.settings.autostart;
+  // viaggi ed eventi dei viaggi li gestisce il processo principale
+  d.trips = data.trips; d.events = d.events.filter(e => !e.tripRef).concat(data.events.filter(e => e.tripRef));
   const r = sync.reconcile(data, d);
   data = r.data; saveData(data);
   markDirty();
@@ -514,11 +517,118 @@ ipcMain.handle('wx:search', async (_e, name) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// ---------- Database Notion e viaggi ----------
+const ndb = createNotionDb({ data: () => data, secret: (id) => loadSecrets()[id] });
+ipcMain.handle('ndb:accounts', () => (data ? data.accounts.filter(a => a.provider === 'notion').map(a => ({ id: a.id, name: a.name })) : []));
+ipcMain.handle('ndb:list', wrap((acc) => ndb.listDatabases(acc)));
+ipcMain.handle('ndb:schema', wrap(({ acc, db }) => ndb.schema(acc, db)));
+ipcMain.handle('ndb:query', wrap(({ acc, db, cursor, sorts }) => ndb.query(acc, db, { cursor, sorts })));
+ipcMain.handle('ndb:update', wrap(({ acc, page, props }) => ndb.update(acc, page, props)));
+ipcMain.handle('ndb:create', wrap(({ acc, db, props }) => ndb.create(acc, db, props)));
+ipcMain.handle('ndb:archive', wrap(({ acc, page }) => ndb.archive(acc, page)));
+
+const pick = (props, names, type) => { for (const n of names) { const p = props[n]; if (p && (!type || p.type === type)) return p.value; } const any = type ? Object.values(props).find(p => p.type === type) : null; return any ? any.value : null; };
+const asList = (v) => Array.isArray(v) ? v.map(x => x.name) : v && v.name ? [v.name] : [];
+const pad2 = (n) => String(n).padStart(2, '0');
+const toLocal = (s) => { if (!s) return null; if (s.length === 10) return s + 'T00:00'; const d = new Date(s); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+
+function tripItem(r) {
+  const P = r.props;
+  const date = pick(P, ['Date', 'Data', 'Quando'], 'date');
+  return {
+    id: r.id, url: r.url, title: pick(P, ['Activity', 'Attività', 'Name', 'Nome'], 'title') || '(senza titolo)',
+    start: date ? toLocal(date.start) : null, end: date && date.end ? toLocal(date.end) : null, allDay: !!(date && date.start && date.start.length === 10),
+    time: pick(P, ['Time', 'Ora', 'Orario'], 'rich_text') || '',
+    place: pick(P, ['Luogo', 'Place', 'Location', 'Posto'], 'place') || (pick(P, ['Luogo', 'Location', 'Indirizzo'], 'rich_text') ? { name: pick(P, ['Luogo', 'Location', 'Indirizzo'], 'rich_text'), lat: null, lon: null } : null),
+    type: (pick(P, ['Type', 'Tipo', 'Categoria'], 'select') || {}).name || '',
+    transport: (pick(P, ['Transport', 'Trasporto', 'Mezzo'], 'select') || {}).name || pick(P, ['Transport', 'Trasporto', 'Mezzo'], 'rich_text') || '',
+    status: (pick(P, ['Status', 'Stato'], 'status') || pick(P, ['Status', 'Stato'], 'select') || {}).name || '',
+    booked: !!pick(P, ['Booked', 'Prenotato'], 'checkbox'),
+    cost: pick(P, ['Estimated Cost', 'Costo', 'Cost'], 'number'),
+    city: (pick(P, ['City', 'Città'], 'select') || {}).name || '',
+    storia: P['Storia']?.value || '', cercare: P['Da cercare']?.value || '', anno: P['Anno storico']?.value || '', notes: P['Notes']?.value || P['Note']?.value || '',
+  };
+}
+
+let tripSyncing = false;
+async function syncTrips() {
+  const cfg = data && data.settings.trips;
+  if (!cfg || !cfg.destDb) throw new Error('Scegli prima il database delle destinazioni.');
+  if (tripSyncing) return false;
+  tripSyncing = true;
+  try {
+    const dests = await ndb.queryAll(cfg.acc, cfg.destDb);
+    const old = data.trips || {};
+    const trips = {};
+    for (const r of dests) {
+      if (r.archived) continue;
+      const P = r.props, st = pick(P, ['Status', 'Stato'], 'status') || pick(P, ['Status', 'Stato'], 'select');
+      const dt = pick(P, ['Date (Planned)', 'Date', 'Data', 'Date planned'], 'date');
+      const prev = old[r.id] || {};
+      const t = {
+        id: r.id, url: r.url, icon: r.icon, name: pick(P, ['Name', 'Nome'], 'title') || 'Viaggio', status: st?.name || '', statusColor: st?.color || '',
+        start: dt?.start || null, end: dt?.end || null, nights: pick(P, ['Nights', 'Notti'], 'number'),
+        type: asList(P['Type']?.value), transport: asList(P['Transportation']?.value ?? P['Trasporto']?.value), buddy: asList(P['Travel Buddy']?.value), budget: asList(P['Budget']?.value),
+        continent: asList(P['Continent']?.value), favorite: !!P['Favorite']?.value, based: !!P['Based']?.value,
+        itineraryDb: prev.itineraryDb || null, currency: prev.currency || null, items: prev.items || [], ai: prev.ai || null, syncedAt: prev.syncedAt || null,
+      };
+      // l'itinerario: database annidato nella pagina della destinazione (solo per viaggi fatti o in programma)
+      const wanted = !/want|desider/i.test(t.status) || cfg.allItineraries;
+      if (wanted) {
+        try {
+          if (!t.itineraryDb) { const ch = await ndb.childDatabases(cfg.acc, r.id); const it = ch.find(c => /itiner/i.test(c.title)) || ch[0]; t.itineraryDb = it ? it.id : null; }
+          if (t.itineraryDb) {
+            if (!t.currency) { try { const sc = await ndb.schema(cfg.acc, t.itineraryDb); const f = (sc.props.find(p => /cost|costo|prezzo|price/i.test(p.name) && p.type === 'number') || {}).format || ''; t.currency = /pound/.test(f) ? '£' : /dollar/.test(f) ? '$' : /yen/.test(f) ? '¥' : /franc/.test(f) ? 'CHF' : '€'; } catch { t.currency = '€'; } }
+            let items = (await ndb.queryAll(cfg.acc, t.itineraryDb)).filter(x => !x.archived).map(tripItem);
+            const same = items.filter(i => i.city && i.city.toLowerCase() === t.name.toLowerCase());
+            if (same.length && same.length < items.length) items = same;
+            items.sort((a, b) => (a.start || '9999').localeCompare(b.start || '9999') || (a.time || '').localeCompare(b.time || ''));
+            t.items = items; t.syncedAt = new Date().toISOString();
+          }
+        } catch (e) { t.error = e.message; }
+      }
+      trips[r.id] = t;
+    }
+    data.trips = trips;
+    tripsToAgenda();
+    commit();
+    return Object.keys(trips).length;
+  } finally { tripSyncing = false; }
+}
+// le tappe con data e ora diventano eventi dell'agenda (sola lettura) che aprono l'itinerario
+function tripsToAgenda() {
+  const cfg = data.settings.trips || {};
+  data.events = data.events.filter(e => !e.tripRef);
+  if (cfg.agenda === false) return;
+  let n = 0;
+  for (const t of Object.values(data.trips || {})) {
+    if (t.based || /want|desider/i.test(t.status)) continue;
+    if (t.start) {
+      const s = t.start.slice(0, 10), e = (t.end || t.start).slice(0, 10);
+      data.events.push({ id: 'trip-' + t.id, title: `${t.icon || '✈️'} Viaggio · ${t.name}`, kind: 'evento', projectId: '', allDay: true, start: s + 'T00:00', end: e + 'T23:59', location: t.name, reminder: null, notes: '', tripRef: { dest: t.id } });
+    }
+    t.items.forEach((it, i) => {
+      if (!it.start || it.allDay) return;
+      const next = t.items.slice(i + 1).find(x => x.start && !x.allDay && x.start.slice(0, 10) === it.start.slice(0, 10));
+      let end = it.end;
+      if (!end) { const d = new Date(it.start); const nx = next ? new Date(next.start) : null; const e = new Date(d.getTime() + 60 * 60000); end = toLocal((nx && nx > d && nx < e ? nx : e).toISOString()); }
+      const em = (it.type.match(/^\p{Extended_Pictographic}\uFE0F?/u) || [''])[0];
+      data.events.push({ id: 'trip-' + it.id, title: (em ? em + ' ' : '') + it.title, kind: 'appuntamento', projectId: '', allDay: false, start: it.start, end, location: it.place?.name || '', reminder: null, notes: '', tripRef: { dest: t.id, item: it.id } });
+      n++;
+    });
+  }
+  return n;
+}
+ipcMain.handle('trip:sync', wrap(() => syncTrips()));
+ipcMain.handle('trip:children', wrap(({ acc, page }) => ndb.childDatabases(acc, page)));
+ipcMain.handle('trip:agenda', wrap(() => { tripsToAgenda(); commit(); return true; }));
+ipcMain.handle('trip:ai', wrap(({ id, ai }) => { const t = data.trips && data.trips[id]; if (!t) throw new Error('Viaggio non trovato'); t.ai = ai; commit(); return true; }));
+
 // ---------- Assistente IA ----------
-ipcMain.handle('ai:chat', async (_e, { system, messages }) => {
+ipcMain.handle('ai:chat', async (_e, { system, messages, maxTokens }) => {
   if (!data) return { ok: false, error: 'Promemo è bloccata' };
   const cfg = data.settings.ai || {};
-  try { return { ok: true, text: await aiLib.chat(cfg, loadSecrets()['ai:' + cfg.provider], system, messages) }; }
+  try { return { ok: true, text: await aiLib.chat(cfg, loadSecrets()['ai:' + cfg.provider], system, messages, { maxTokens }) }; }
   catch (e) { return { ok: false, error: e.message }; }
 });
 ipcMain.handle('ai:key', (_e, { provider, key }) => {
@@ -607,8 +717,9 @@ function startServices() {
   servicesStarted = true;
   checkReminders();
   setInterval(checkReminders, 20 * 1000);
-  setTimeout(() => sync.syncAll(), 3000);
-  setInterval(() => { if (data) sync.syncAll(); }, Math.max(5, data.settings.syncMinutes || 15) * 60000);
+  const tripAuto = () => { if (data && data.settings.trips && data.settings.trips.destDb) syncTrips().catch(e => console.warn('viaggi:', e.message)); };
+  setTimeout(() => { sync.syncAll(); tripAuto(); }, 3000);
+  setInterval(() => { if (data) { sync.syncAll(); tripAuto(); } }, Math.max(5, data.settings.syncMinutes || 15) * 60000);
   require('electron').powerMonitor.on('resume', () => setTimeout(() => { if (data) sync.syncAll(); remoteCheck(); }, 8000));
   setTimeout(remoteCheck, 6000);
   setInterval(remoteCheck, 30 * 60000);

@@ -34,7 +34,7 @@ async function call(url, opts, timeoutMs = 90000) {
  * system: istruzioni, messages: [{ role: 'user'|'assistant', content }]
  * restituisce il testo della risposta
  */
-async function chat(cfg, key, system, messages) {
+async function chat(cfg, key, system, messages, opts = {}) {
   const p = cfg.provider;
   const d = DEFAULTS[p] || {};
   const model = (cfg.model || d.model || '').trim();
@@ -44,7 +44,7 @@ async function chat(cfg, key, system, messages) {
     const j = await call(`${AAPI}/v1/messages`, {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model, max_tokens: 2500, system, messages }),
+      body: JSON.stringify({ model, max_tokens: opts.maxTokens || 2500, system, messages }),
     });
     return (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n');
   }
@@ -52,15 +52,15 @@ async function chat(cfg, key, system, messages) {
     const j = await call(`${base}/api/chat`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model, stream: false, format: 'json', options: { temperature: 0.4 }, messages: [{ role: 'system', content: system }, ...messages] }),
-    }, 180000);
+    }, 300000);
     return j?.message?.content || '';
   }
   if (p === 'openai') {
     const j = await call(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
-      body: JSON.stringify({ model, temperature: 0.4, messages: [{ role: 'system', content: system }, ...messages] }),
-    });
+      body: JSON.stringify({ model, temperature: 0.4, ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}), messages: [{ role: 'system', content: system }, ...messages] }),
+    }, opts.maxTokens > 3000 ? 240000 : 90000);
     return j?.choices?.[0]?.message?.content || '';
   }
   throw new Error('Nessun motore configurato.');

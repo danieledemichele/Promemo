@@ -15,6 +15,8 @@ Stile ispirato a macOS, dati salvati sul tuo computer, sincronizzazione con Goog
 - **Progetti**: prossimo passo, passi con scadenza, appuntamenti collegati, timeline di tracce.
 - **Agenda**: viste **Giorno**, **Settimana** (come Notion Calendar: griglia oraria, riga “tutto il giorno”, impegni affiancati quando si sovrappongono, linea rossa dell'ora attuale, numero della settimana) e **Mese**. Trascina su una fascia vuota per creare un evento, trascina un evento per spostarlo (anche su un altro giorno), tira il bordo inferiore per cambiarne la durata. Mini calendario nella barra laterale. **Un clic su un giorno apre il popup animato** con gli impegni del giorno e il modulo completo per un nuovo evento (titolo, tipo, giornata intera, inizio/fine, luogo, promemoria, progetto, calendario di destinazione, note).
 - **Promemoria**: tutto ciò che ha un avviso, con notifiche desktop.
+- **Viaggi**: destinazioni e itinerari letti da Notion, con il racconto scritto dall'IA (vedi sotto).
+- **Database Notion**: sfoglia e modifica i database condivisi con l'integrazione.
 - **Account collegati**: Google Calendar, Notion, calendari da link.
 
 ## Password all'avvio
@@ -24,6 +26,24 @@ Promemo può chiedere una password a ogni apertura (*Impostazioni → Password a
 - Dopo 3 tentativi sbagliati l'attesa tra un tentativo e l'altro cresce fino a 60 secondi.
 - Finché Promemo è bloccata non può inviare notifiche né sincronizzare: dopo lo sblocco resta attiva (anche nell'area di notifica) fino all'uscita.
 - I backup esportati in JSON non sono cifrati.
+
+## Viaggi
+Promemo legge da Notion i dati essenziali di ogni viaggio e l'intelligenza artificiale scrive il resto.
+
+| Itinerario | Mappa | Viaggi |
+|---|---|---|
+| ![Itinerario](docs/viaggio-itinerario.png) | ![Mappa](docs/viaggio-mappa.png) | ![Viaggi](docs/viaggi.png) |
+
+- **Da Notion**: si sceglie il database delle destinazioni (es. *Destinations* del Travel Planner). Le colonne vengono riconosciute da sole: nome, stato (*Visited / In Planning / Want to go*), date, notti, mezzi di trasporto, compagni di viaggio, budget, preferito. L'**itinerario** è il database annidato nella pagina del viaggio, trovato anche dentro colonne e toggle: per ogni tappa attività, data e ora, **luogo** (colonna di tipo posizione, con coordinate), tipo, stato, prenotato, costo stimato, note, *Storia*, *Da cercare*, *Anno storico*.
+- **Dall'IA** (*Scrivi con l'IA* nella pagina del viaggio): il racconto del viaggio, un titolo e una sintesi per ogni giorno, la storia e le curiosità di ogni luogo, come spostarsi da una tappa all'altra e qualche consiglio pratico. Se in Notion la colonna *Storia* è già compilata, vince quella. Per un viaggio già fatto i testi sono scritti come un ricordo. I testi restano salvati sul computer e si possono riscrivere.
+- **Percorso**: linea del tempo per giorno con orari, tipo di tappa e distanza e tempo a piedi o con i mezzi tra una tappa e l'altra (calcolati dalle coordinate). **Elenco**: tabella compatta. **Mappa**: tappe numerate e collegate per giorno, filtro per giorno; aeroporti e gite fuori città restano sul bordo per non schiacciare il centro.
+- **In Agenda**: il viaggio compare come evento di più giorni e ogni tappa con orario come appuntamento nel gruppo *Viaggi da Notion* (colore e visibilità dalla barra laterale). Un clic su una tappa apre l'itinerario in quel punto.
+- I viaggi si aggiornano con la sincronizzazione periodica o con *Aggiorna da Notion*.
+
+## Database Notion
+![Database Notion](docs/database-notion.png)
+
+Tutti i database condivisi con l'integrazione, in tabella: titolo, testo, numeri, selezione, stato, selezione multipla, caselle, date, link, email e telefono si modificano direttamente e la modifica va subito su Notion. Ordinamento per colonna, filtro, nuove righe, archiviazione (doppio clic sul cestino) e collegamento alla pagina in Notion. Le altre colonne (posizione, relazioni, formule, rollup, persone, file) sono in sola lettura.
 
 ## Meteo
 Icona in alto a destra con la temperatura attuale; un clic apre condizioni, umidità, vento, alba e tramonto, le prossime 24 ore e i 7 giorni. Nella Home c'è un riquadro con la situazione di oggi e nelle viste Giorno/Settimana ogni giorno mostra icona e massima. La località si cambia in *Impostazioni → Meteo* (predefinita: Cagliari). Dati di [Open-Meteo](https://open-meteo.com), gratuiti e senza account.
@@ -110,12 +130,12 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.8.0.AppImage e dist/promemo_1.8.0_amd64.deb
-sudo apt install ./dist/promemo_1.8.0_amd64.deb
+npm run dist        # dist/Promemo-1.9.0.AppImage e dist/promemo_1.9.0_amd64.deb
+sudo apt install ./dist/promemo_1.9.0_amd64.deb
 ```
 
 ## Scorciatoie
-Ctrl+K palette comandi · Ctrl+J assistente · Ctrl+B barra laterale · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni · Esc chiude popup e finestre.
+Ctrl+K palette comandi · Ctrl+J assistente · Ctrl+B barra laterale · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni principali · Esc chiude popup e finestre.
 
 ## Dati
 `~/.config/Promemo/promemo.json` (scrittura atomica). Backup da *Impostazioni → Esporta*.
@@ -127,6 +147,7 @@ main.js        processo principale: archivio, promemoria, vassoio, IPC
 backup.js      backup cifrati e destinazioni (cartella, Dropbox, WebDAV, rclone)
 ai.js          motori IA (Anthropic, Ollama, compatibili OpenAI)
 vault.js       cifratura locale (scrypt + AES-256-GCM, chiave di recupero)
+notiondb.js    database Notion: elenco, schema, righe, modifica; itinerari annidati
 sync.js        Google Calendar (OAuth PKCE), Notion API, feed .ics; unione e invio modifiche
 ics.js         parser iCalendar con fusi orari e ricorrenze
 preload.js     ponte sicuro verso l'interfaccia

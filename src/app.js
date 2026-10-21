@@ -3,6 +3,9 @@
 
 const api = window.promemo;
 let data = null;
+// sezioni aggiunte da altri file (viaggi, database Notion)
+const EXTRA_NAV = [];   // [view, icona, etichetta, extra()]
+const EXTRA_VIEWS = {}; // view → { title, render(), full?, after?() }
 const ui = {
   view: 'home',
   projectId: null,
@@ -54,7 +57,7 @@ const PROV = { google: 'Google Calendar', notion: 'Notion', ics: 'Calendario web
 const provLetter = (p) => ({ google: 'G', notion: 'N', calendly: 'C' })[p] || icon('i-calendar');
 const accOf = (e) => { const t = e.source || e.pushTo; return t ? (data.accounts || []).find(a => a.id === t.acc) : null; };
 const calOf = (e) => { const t = e.source || e.pushTo; const a = accOf(e); return a ? a.calendars.find(c => c.id === t.cal) : null; };
-const isReadOnly = (e) => { const c = calOf(e); return !!(e.source && c && !c.writable); };
+const isReadOnly = (e) => { if (e.tripRef) return true; const c = calOf(e); return !!(e.source && c && !c.writable); };
 function srcPill(e) {
   const a = accOf(e); if (!a) return '';
   const c = calOf(e);
@@ -358,6 +361,7 @@ function renderSidebar() {
     ['progetti', 'i-folder', 'Progetti', `<span class="count">${active}</span>`],
     ['agenda', 'i-calendar', 'Agenda', ''],
     ['promemoria', 'i-bell', 'Promemoria', late ? `<span class="badge">${late}</span>` : ''],
+    ...EXTRA_NAV.map(([v, ic, l, ex]) => [v, ic, l, ex ? ex() : '']),
     ['account', 'i-sync', 'Account collegati', (data.accounts || []).some(a => a.error) ? `<span class="badge warn">!</span>` : (data.accounts || []).length ? `<span class="count">${data.accounts.length}</span>` : ''],
   ];
   $('#nav').innerHTML = items.map(([v, ic, label, extra]) =>
@@ -1031,11 +1035,13 @@ function renderNow() {
   const v = $('#view');
   const scroll = v.querySelector('.detail-pane')?.scrollTop;
   const titles = { home: 'Home', progetti: 'Progetti', agenda: 'Agenda', promemoria: 'Promemoria', account: 'Account collegati' };
-  $('#toolbar-title').textContent = ui.search ? 'Ricerca' : titles[ui.view];
-  v.classList.toggle('full', (ui.view === 'progetti' || (ui.view === 'agenda' && calMode() !== 'mese')) && !ui.search);
-  v.innerHTML = ui.search ? viewSearch() : ui.view === 'home' ? viewHome() : ui.view === 'progetti' ? viewProjects() : ui.view === 'agenda' ? viewAgenda() : ui.view === 'account' ? viewAccounts() : viewReminders();
+  const xv = EXTRA_VIEWS[ui.view];
+  $('#toolbar-title').textContent = ui.search ? 'Ricerca' : xv ? xv.title : titles[ui.view];
+  v.classList.toggle('full', (ui.view === 'progetti' || (ui.view === 'agenda' && calMode() !== 'mese') || !!(xv && xv.full && xv.full())) && !ui.search);
+  v.innerHTML = ui.search ? viewSearch() : xv ? xv.render() : ui.view === 'home' ? viewHome() : ui.view === 'progetti' ? viewProjects() : ui.view === 'agenda' ? viewAgenda() : ui.view === 'account' ? viewAccounts() : viewReminders();
   renderSyncButton();
   if (ui.view === 'agenda' && !ui.search && calMode() !== 'mese') initTimeGrid();
+  if (xv && xv.after && !ui.search) xv.after(v);
   if (scroll) { const dp = v.querySelector('.detail-pane'); if (dp) dp.scrollTop = scroll; }
 }
 
@@ -1952,7 +1958,7 @@ document.querySelector('.toolbar').addEventListener('dblclick', (e) => { if (e.t
 window.addEventListener('blur', () => document.body.classList.add('blurred'));
 window.addEventListener('focus', () => document.body.classList.remove('blurred'));
 
-api.onDataChanged((d) => { if (dirty) return; data = d; if (document.activeElement?.closest('#sheet textarea, #sheet [contenteditable], .ai-drawer input')) return; render(); });
+api.onDataChanged((d) => { if (dirty) return; data = d; if (document.activeElement?.closest('#sheet textarea, #sheet [contenteditable], .ai-drawer input, .ndb input, .ndb select')) return; render(); });
 api.onSyncStatus((st) => { syncing = !!st.syncing; renderSyncButton(); if (ui.view === 'account' && $('#modal-backdrop').hidden) render(); });
 api.onNavigate((r) => {
   if (r.action === 'new') return modalNew();
