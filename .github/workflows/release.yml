@@ -1,0 +1,102 @@
+name: Release
+
+# Costruisce i pacchetti e li allega alla release quando si crea un tag vX.Y.Z
+# (o a mano da Actions → Release → Run workflow, indicando il tag).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag della release (es. v1.12.0)'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Crea la release se non esiste
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+
+  desktop:
+    needs: release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: AppImage e .deb
+        run: npx electron-builder --linux AppImage deb --publish never
+      - name: Allega alla release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/*.AppImage dist/*.deb --clobber
+
+  android:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: C'è l'app Android?
+        id: has
+        run: test -d mobile-app && echo "yes=1" >> "$GITHUB_OUTPUT" || echo "yes=0" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        if: steps.has.outputs.yes == '1'
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        if: steps.has.outputs.yes == '1'
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Prepara il web e Capacitor
+        if: steps.has.outputs.yes == '1'
+        working-directory: mobile-app
+        run: |
+          npm ci
+          npm run build
+          npx cap sync android
+      - name: Chiave di firma
+        if: steps.has.outputs.yes == '1'
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS" ]; then echo "$KS" | base64 -d > mobile-app/android/app/promemo.jks; fi
+      - name: APK
+        if: steps.has.outputs.yes == '1'
+        working-directory: mobile-app/android
+        env:
+          PROMEMO_KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          VER="${TAG#v}"
+          cp app/build/outputs/apk/release/app-release.apk "../../Promemo-$VER.apk"
+      - name: Allega alla release
+        if: steps.has.outputs.yes == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" Promemo-*.apk --clobber
