@@ -33,6 +33,8 @@
       "quick.js",
       "travel.js",
       "mobile.js",
+      "phonesync.js",
+      "log.js",
       "src/**/*",
       "build/icon.png"
     ],

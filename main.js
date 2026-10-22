@@ -9,9 +9,29 @@ const { createUpdater } = require('./updater');
 const quick = require('./quick');
 const { createTravel } = require('./travel');
 const { createMobile } = require('./mobile');
+const { createPhoneSync } = require('./phonesync');
+const SyncModel = require('./src/syncmodel.js');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const log = require('./log');
+const Recur = require('./src/recur.js');
+
+// ---------- Registro degli errori ----------
+log.init(app.getPath('userData'));
+log.info('main', `avvio Promemo ${app.getVersion()} · Electron ${process.versions.electron} · ${os.type()} ${os.release()}`);
+process.on('uncaughtException', (e) => log.error('main', 'eccezione non gestita', e));
+process.on('unhandledRejection', (e) => log.error('main', 'promessa rifiutata non gestita', e instanceof Error ? e : new Error(String(e))));
+for (const k of ['warn', 'error']) { const orig = console[k].bind(console); console[k] = (...a) => { orig(...a); log[k]('console', a.map(x => x instanceof Error ? x.message : typeof x === 'string' ? x : JSON.stringify(x)).join(' ')); }; }
+app.on('render-process-gone', (_e, wc, d) => log.error('finestra', `processo dell'interfaccia terminato: ${d.reason} (codice ${d.exitCode}) · ${wc.getURL().split('/').pop()}`));
+app.on('child-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') log.error('main', `processo ${d.type} terminato: ${d.reason}`); });
+// ogni chiamata dall'interfaccia che fallisce finisce nel registro
+const _handle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (ch, fn) => _handle(ch, async (e, ...a) => {
+  try { const r = await fn(e, ...a); if (r && r.ok === false && r.error && !/bloccata/.test(r.error)) log.warn('ipc', `${ch}: ${r.error}`); return r; }
+  catch (err) { log.error('ipc', `${ch}: ${err.message}`, err); throw err; }
+});
+ipcMain.on('log:write', (_e, { level, src, msg, stack }) => { const err = stack ? Object.assign(new Error(msg), { stack }) : null; log[level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info'](src || 'interfaccia', msg, err); });
 
 const ICON = path.join(__dirname, 'build', 'icon.png');
 app.commandLine.appendSwitch('lang', 'it-IT');
@@ -115,6 +135,8 @@ function loadData() {
 
 function saveData(d) {
   fs.mkdirSync(dataDir(), { recursive: true });
+  // date di modifica e cancellazioni per la sincronizzazione con il telefono
+  try { if (d && d.settings && typeof phoneSync !== 'undefined') SyncModel.track(d, phoneSync.dev()); } catch (e) { log.warn('sync-telefono', 'tracciamento: ' + e.message); }
   if (vault) {
     if (!dataKey) return; // bloccata: niente da salvare
     writeAtomic(encFile(), vaultLib.seal(dataKey, JSON.stringify(d)));
@@ -200,12 +222,13 @@ function checkReminders() {
   let changed = false;
   const projName = (id) => (data.projects.find(p => p.id === id) || {}).title;
 
-  for (const ev of data.events) {
+  const evList = data.events.flatMap(e => e.rrule ? Recur.between(e, new Date(now - 864e5), new Date(now + 2 * 864e5)).map(i => ({ i, e })) : [{ i: e, e }]);
+  for (const { i: ev, e: orig } of evList) {
     const t = remindTime(ev, 'start');
-    if (t && t <= now && now - t < window6h && ev.notifiedAt !== t) {
+    if (t && t <= now && now - t < window6h && orig.notifiedAt !== t) {
       const pn = projName(ev.projectId);
       notify(ev.title, `${fmtTime(ev.start)}${ev.location ? ' · ' + ev.location : ''}${pn ? '\n' + pn : ''}`, { view: 'agenda', date: ev.start.slice(0, 10) });
-      ev.notifiedAt = t; changed = true;
+      orig.notifiedAt = t; changed = true;
     }
   }
   for (const p of data.projects) {
@@ -301,13 +324,17 @@ ipcMain.handle('data:set', (_e, d) => {
     for (const st of p.steps) if (st.qrev > base && !ids.has(st.id)) q.steps.push(st);
   }
   const r = sync.reconcile(data, d);
-  data = r.data; saveData(data);
+  data = r.data;
+  const spawned = spawnRepeats(data);
+  saveData(data);
   markDirty();
   if (r.needsPush) schedulePush();
   if (prevAuto !== data.settings.autostart) setAutostart(data.settings.autostart);
   checkReminders();
   sideWindows('data-changed', data);
-  clearTimeout(travelTimer); travelTimer = setTimeout(() => travel.refresh().catch(() => {}), 3000);
+  if (phoneSync.cfg().enabled) psSoon();
+  clearTimeout(travelTimer); travelTimer = setTimeout(() => travel.refresh().catch(e => log.warn('viaggio', e.message)), 3000);
+  if (spawned) setTimeout(() => { if (data) commit(); }, 80); // il compito successivo compare subito nell'interfaccia
   return { rev: data.rev, accounts: data.accounts, pendingDeletes: data.pendingDeletes, events: data.events };
 });
 
@@ -542,6 +569,91 @@ ipcMain.handle('wx:search', async (_e, name) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// ---------- Compiti che si ripetono: quando ne completi uno nasce il successivo ----------
+function spawnRepeats(d) {
+  let n = 0;
+  for (const p of d.projects) {
+    for (const st of [...p.steps]) {
+      if (!st.repeat || !st.done || st.repeatNext) continue;
+      const base = st.due || st.doneAt || localISO(new Date());
+      let nx = Recur.next(st.repeat, base, base);
+      // se ero in ritardo, il prossimo è il primo dopo oggi
+      while (nx && nx < localISO(new Date()).slice(0, 10) + 'T00:00') nx = Recur.next(st.repeat, base, nx);
+      if (!nx) { st.repeatNext = 'fine'; continue; }
+      const id = 's-' + uid();
+      const copy = { ...st, id, due: nx, done: false, doneAt: null, notifiedAt: undefined, repeatNext: undefined, qrev: (d.rev || 0) + 1, checklist: (st.checklist || []).map(c => ({ ...c, done: false })), notes: st.notes || '' };
+      delete copy.notifiedAt; delete copy.repeatNext; delete copy.autoDue; delete copy.autoLate;
+      if (st.auto && st.deadline && st.due) { const shift = new Date(nx) - new Date(st.due); copy.deadline = localISO(new Date(new Date(st.deadline).getTime() + shift)); }
+      st.repeatNext = id; p.steps.push(copy); n++;
+    }
+  }
+  return n;
+}
+
+// ---------- Istantanee locali (una al giorno, ultime 14) ----------
+const snapDir = () => path.join(dataDir(), 'istantanee');
+function snapWrite(reason = 'giornaliera') {
+  if (!data) return null;
+  fs.mkdirSync(snapDir(), { recursive: true });
+  const t = new Date(), name = `promemo-${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}_${pad(t.getHours())}-${pad(t.getMinutes())}-${reason}${vault ? '.enc' : '.json'}`;
+  const body = JSON.stringify({ ...data, accounts: undefined, pendingDeletes: undefined });
+  writeAtomic(path.join(snapDir(), name), vault ? vaultLib.seal(dataKey, body) : body);
+  // ne tengo 14 giornaliere + 10 "prima di…"
+  const all = fs.readdirSync(snapDir()).filter(f => f.startsWith('promemo-')).sort().reverse();
+  const daily = all.filter(f => /-giornaliera\./.test(f)), other = all.filter(f => !/-giornaliera\./.test(f));
+  for (const f of [...daily.slice(14), ...other.slice(10)]) fs.rmSync(path.join(snapDir(), f), { force: true });
+  log.info('istantanee', `salvata ${name}`);
+  return name;
+}
+function snapDaily() {
+  try {
+    const today = new Date(); const k = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    const has = fs.existsSync(snapDir()) && fs.readdirSync(snapDir()).some(f => f.startsWith(`promemo-${k}`) && f.includes('-giornaliera'));
+    if (!has) snapWrite('giornaliera');
+  } catch (e) { log.warn('istantanee', e.message); }
+}
+function snapRead(name) {
+  const buf = fs.readFileSync(path.join(snapDir(), path.basename(name)));
+  return JSON.parse(name.endsWith('.enc') ? vaultLib.open(dataKey, buf).toString('utf8') : buf.toString('utf8'));
+}
+ipcMain.handle('snap:list', () => { try { return fs.readdirSync(snapDir()).filter(f => f.startsWith('promemo-')).sort().reverse().map(f => { const st = fs.statSync(path.join(snapDir(), f)); const m = f.match(/^promemo-(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-([a-z-]+)\./); return { name: f, size: st.size, at: m ? `${m[1]}T${m[2]}:${m[3]}` : st.mtime.toISOString(), reason: m ? m[4] : '' }; }); } catch { return []; } });
+ipcMain.handle('snap:now', wrap(() => snapWrite('manuale')));
+ipcMain.handle('snap:peek', wrap((name) => { const d = snapRead(name); return { events: d.events.length, projects: d.projects.length, steps: d.projects.reduce((n, p) => n + p.steps.length, 0) }; }));
+ipcMain.handle('snap:restore', wrap((name) => {
+  const d = snapRead(name);
+  snapWrite('prima-del-ripristino');
+  d.accounts = data.accounts; d.pendingDeletes = []; normalize(d); d.rev = (data.rev || 0) + 1;
+  // gli eventi dei calendari collegati tornano alla prossima sincronizzazione
+  d.events = d.events.filter(e => !e.source).concat(data.events.filter(e => e.source));
+  data = d; commit(); log.info('istantanee', `ripristinata ${name}`);
+  return true;
+}));
+
+// ---------- Diagnostica ----------
+function diagState() {
+  const d = data || {};
+  const st = d.settings || {};
+  return {
+    bloccata: !data, cifrata: !!vault,
+    account: (d.accounts || []).map(a => ({ tipo: a.provider, attivo: a.enabled, ultimaSync: a.lastSync, errore: a.error || '' , calendari: (a.calendars || []).length })),
+    eventi: (d.events || []).length, progetti: (d.projects || []).length, compiti: (d.projects || []).reduce((n, p) => n + p.steps.length, 0), viaggi: Object.keys(d.trips || {}).length,
+    backup: st.backup ? { attivo: !!st.backup.enabled, dove: st.backup.dest && (st.backup.dest.type || st.backup.dest), ultimo: st.backup.lastAt, errore: st.backup.lastError || '' } : null,
+    ia: st.ai ? st.ai.provider : 'none', spostamenti: !!(st.travel && st.travel.enabled), telefono: !!(st.mobile && st.mobile.enabled), widget: !!(st.widget && st.widget.enabled),
+    sincronizzazioneTelefono: st.phoneSync ? { attiva: !!st.phoneSync.enabled, ultima: st.phoneSync.lastAt, errore: st.phoneSync.lastError || '' } : null,
+    modo: process.env.APPIMAGE ? 'AppImage' : app.isPackaged ? 'deb' : 'sviluppo',
+  };
+}
+ipcMain.handle('log:stats', () => ({ ...log.stats(), file: log.file() }));
+ipcMain.handle('log:read', () => log.read(300000));
+ipcMain.handle('log:clear', () => { log.clear(); log.info('main', 'registro svuotato'); return true; });
+ipcMain.handle('log:open', () => shell.openPath(log.dir()));
+ipcMain.handle('log:export', async () => {
+  const r = await dialog.showSaveDialog(win, { title: 'Esporta la diagnostica', defaultPath: path.join(app.getPath('downloads'), `promemo-diagnostica-${new Date().toISOString().slice(0, 10)}.txt`), filters: [{ name: 'Testo', extensions: ['txt'] }] });
+  if (r.canceled || !r.filePath) return false;
+  fs.writeFileSync(r.filePath, log.diagnostics({ versions: { Promemo: app.getVersion(), Electron: process.versions.electron, Chrome: process.versions.chrome, Node: process.versions.node }, state: diagState() }));
+  return r.filePath;
+});
+
 // ---------- Aggiunta al volo da una frase ----------
 function quickAdd(text, opts) {
   if (!data) throw new Error('Promemo è bloccata: sbloccala per aggiungere');
@@ -598,7 +710,14 @@ ipcMain.handle('shortcut:state', () => ({ exec: process.env.APPIMAGE || (app.isP
 ipcMain.handle('main:show', (_e, route) => { showWindow(); if (route && win) win.webContents.send('navigate', route); });
 
 // ---------- Promemo sul telefono ----------
-const mobile = createMobile({ data: () => data, commit, quickAdd: (t, o) => quickAdd(t, o), root: __dirname, onChange: () => { if (win) win.webContents.send('mobile-status', mobile.status()); } });
+const phoneSync = createPhoneSync({ data: () => data, commit, backup, log, snapshot: (r) => { try { snapWrite(r); } catch { /* */ } }, secret: (k) => loadSecrets()[k] });
+let psTimer = null;
+const psSoon = (ms = 30000) => { clearTimeout(psTimer); psTimer = setTimeout(() => phoneSync.cloudRun('modifiche').catch(() => {}), ms); };
+ipcMain.handle('psync:status', () => { const c = phoneSync.cfg(); const b = (data && data.settings.backup) || {}; return { ...c, seen: undefined, dest: b.dest ? (b.dest.type || b.dest) : null, hasPass: !!backup.pass() }; });
+ipcMain.handle('psync:set', (_e, patch) => { if (!data) return null; data.settings.phoneSync = { ...phoneSync.cfg(), ...patch }; phoneSync.dev(); commit(); if (patch.enabled) psSoon(500); return phoneSync.cfg(); });
+ipcMain.handle('psync:now', wrap(() => phoneSync.cloudRun('manuale')));
+const mobile = createMobile({ data: () => data, commit, quickAdd: (t, o) => quickAdd(t, o), root: __dirname,
+  sync: { state: () => phoneSync.state(), merge: (st) => { const n = phoneSync.mergeIn(st, 'rete'); spawnRepeats(data) && commit(); return n; }, config: () => phoneSync.cloudConfigForPhone(), enabled: () => phoneSync.cfg().enabled }, onChange: () => { if (win) win.webContents.send('mobile-status', mobile.status()); } });
 ipcMain.handle('mobile:status', () => mobile.status());
 ipcMain.handle('mobile:set', (_e, patch) => {
   if (!data) return null;
@@ -621,7 +740,8 @@ function briefCheck() {
   const day = loc(now);
   data.briefDone = data.briefDone || {};
   const due = (t) => t && hm >= t && hm < String(Math.min(23, +t.slice(0, 2) + 3)).padStart(2, '0') + t.slice(2);
-  const evToday = data.events.filter(e => e.start && e.start.slice(0, 10) <= day && (e.end || e.start).slice(0, 10) >= day && !(e.tripRef && e.allDay));
+  const evAll = Recur.expand(data.events, new Date(now.getTime() - 864e5), new Date(now.getTime() + 2 * 864e5));
+  const evToday = evAll.filter(e => e.start && e.start.slice(0, 10) <= day && (e.end || e.start).slice(0, 10) >= day && !(e.tripRef && e.allDay));
   const steps = data.projects.filter(p => p.status !== 'archiviato').flatMap(p => p.steps.map(st => ({ p, st })));
   if (due(b.morning) && data.briefDone.morning !== day) {
     data.briefDone.morning = day;
@@ -641,7 +761,7 @@ function briefCheck() {
     const done = steps.filter(x => x.st.done && x.st.doneAt && x.st.doneAt.slice(0, 10) === day).length;
     const open = steps.filter(x => !x.st.done && x.st.due && x.st.due.slice(0, 10) <= day).length;
     const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1); const tk = loc(tmr);
-    const first = data.events.filter(e => !e.allDay && e.start && e.start.slice(0, 10) === tk).sort((a, c) => a.start.localeCompare(c.start))[0];
+    const first = evAll.filter(e => !e.allDay && e.start && e.start.slice(0, 10) === tk).sort((a, c) => a.start.localeCompare(c.start))[0];
     notify('Com’è andata oggi 🌙', [`${done} ${done === 1 ? 'cosa fatta' : 'cose fatte'}`, open ? `${open} da spostare` : 'niente in sospeso', first ? `domani si parte alle ${first.start.slice(11, 16)}` : 'domani nessun impegno'].join(' · '), { action: 'brief', kind: 'sera' });
     commit();
   }
@@ -653,7 +773,7 @@ ipcMain.handle('travel:search', wrap((q) => travel.search(q, 6)));
 ipcMain.handle('travel:refresh', wrap(async () => { if (data) { data.travel = {}; } return travel.refresh(); }));
 
 // ---------- Aggiornamenti ----------
-const updater = createUpdater({ app, send: (ch, v) => { if (win && !win.isDestroyed()) win.webContents.send(ch, v); }, onLog: (m) => console.log(m) });
+const updater = createUpdater({ app, send: (ch, v) => { if (win && !win.isDestroyed()) win.webContents.send(ch, v); }, onLog: (m, bad) => log[bad ? 'warn' : 'info']('aggiornamenti', m) });
 ipcMain.handle('upd:state', () => updater.state());
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('upd:check', () => updater.check());
@@ -870,12 +990,14 @@ function startServices() {
   if (process.argv.includes('--aggiungi') || process.argv.includes('--quick')) setTimeout(openQuick, 800);
   checkReminders();
   setInterval(() => { checkReminders(); travel.checkLeave(); briefCheck(); }, 20 * 1000);
-  setTimeout(() => travel.refresh().catch(() => {}), 5000);
-  setInterval(() => travel.refresh().catch(() => {}), 10 * 60000);
+  setTimeout(() => travel.refresh().catch(e => log.warn('viaggio', e.message)), 5000);
+  setInterval(() => travel.refresh().catch(e => log.warn('viaggio', e.message)), 10 * 60000);
   const tripAuto = () => { if (data && data.settings.trips && data.settings.trips.destDb) syncTrips().catch(e => console.warn('viaggi:', e.message)); };
   setTimeout(() => { sync.syncAll(); tripAuto(); }, 3000);
+  setTimeout(snapDaily, 20000); setInterval(snapDaily, 3600 * 1000);
+  setTimeout(() => phoneSync.cloudRun('avvio').catch(() => {}), 12000);
   // intervallo letto ogni volta: si può cambiare dalle impostazioni senza riavviare
-  const syncLoop = () => setTimeout(() => { if (data) { sync.syncAll(); tripAuto(); } syncLoop(); }, Math.max(5, (data && data.settings.syncMinutes) || 15) * 60000);
+  const syncLoop = () => setTimeout(() => { if (data) { sync.syncAll(); tripAuto(); phoneSync.cloudRun('periodica').catch(() => {}); } syncLoop(); }, Math.max(5, (data && data.settings.syncMinutes) || 15) * 60000);
   syncLoop();
   setTimeout(updAuto, Number(process.env.PROMEMO_UPDATE_DELAY || 15000));
   setInterval(updAuto, 6 * 3600 * 1000);

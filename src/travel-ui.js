@@ -2,7 +2,7 @@
 'use strict';
 const TR_MODE = { car: ['🚗', 'in auto'], foot: ['🚶', 'a piedi'], bike: ['🚲', 'in bici'] };
 const travelCfg = () => ({ enabled: false, mode: 'auto', buffer: 5, notify: true, home: null, ...(data.settings.travel || {}) });
-const travelOf = (e) => (data.travel || {})[e.id];
+const travelOf = (e) => (data.travel || {})[e._occ ? `${e.id}@${e._occ}` : e.id];
 function travelBadge(e, compact) {
   const t = travelOf(e); if (!t || !t.leaveAt || t.same || !travelCfg().enabled) return '';
   const m = TR_MODE[t.mode] || TR_MODE.car;

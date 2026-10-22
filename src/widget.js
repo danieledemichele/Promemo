@@ -20,7 +20,7 @@ function colorOf(e) {
 }
 function today() {
   const now = new Date(), k = dk(now);
-  const ev = data.events.filter(e => e.start && e.start.slice(0, 10) <= k && (e.end || e.start).slice(0, 10) >= k && !e.allDay).map(e => ({ t: parse(e.start), end: parse(e.end || e.start), title: e.title, color: colorOf(e), loc: e.location, id: e.id }));
+  const ev = PromemoRecur.expand(data.events, new Date(now.getTime() - 864e5), new Date(now.getTime() + 864e5)).filter(e => e.start && e.start.slice(0, 10) <= k && (e.end || e.start).slice(0, 10) >= k && !e.allDay).map(e => ({ t: parse(e.start), end: parse(e.end || e.start), title: e.title, color: colorOf(e), loc: e.location, id: e._occ ? `${e.id}@${e._occ}` : e.id }));
   const st = data.projects.filter(p => p.status !== 'archiviato').flatMap(p => p.steps.filter(s => !s.done && s.due && s.due.slice(0, 10) === k).map(s => ({ t: parse(s.due), end: new Date(parse(s.due).getTime() + (+s.duration || 30) * 60000), title: (s.auto ? '✦ ' : '◯ ') + s.text, color: '#8e8e93', step: true })));
   return ev.concat(st).sort((a, b) => a.t - b.t);
 }

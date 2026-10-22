@@ -1,0 +1,11 @@
+{
+  "appId": "it.danieledemichele.promemo",
+  "appName": "Promemo",
+  "webDir": "www",
+  "android": { "allowMixedContent": true },
+  "server": { "androidScheme": "http", "cleartext": true },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true },
+    "LocalNotifications": { "smallIcon": "ic_stat_promemo", "iconColor": "#E5562A" }
+  }
+}

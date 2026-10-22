@@ -26,13 +26,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
-      - name: Crea la release se non esiste
+      - name: Crea la release se non esiste (con le note in docs/note/TAG.md)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+          if gh release view "$TAG" >/dev/null 2>&1; then exit 0; fi
+          NOTES="docs/note/$TAG.md"
+          if [ -f "$NOTES" ]; then gh release create "$TAG" --target "${{ github.sha }}" --title "Promemo ${TAG#v}" --notes-file "$NOTES"
+          else gh release create "$TAG" --target "${{ github.sha }}" --title "Promemo ${TAG#v}" --generate-notes; fi
 
   desktop:
     needs: release
@@ -79,6 +80,13 @@ jobs:
           npm ci
           npm run build
           npx cap sync android
+      - name: Versione dell'app dal tag
+        if: steps.has.outputs.yes == '1'
+        run: |
+          VER="${TAG#v}"; IFS=. read -r MA MI PA <<< "$VER"
+          CODE=$((MA*10000 + MI*100 + ${PA:-0}))
+          sed -i "s/versionCode [0-9]*/versionCode $CODE/; s/versionName \".*\"/versionName \"$VER\"/" mobile-app/android/app/build.gradle
+          grep -n "version" mobile-app/android/app/build.gradle
       - name: Chiave di firma
         if: steps.has.outputs.yes == '1'
         env:

@@ -13,6 +13,7 @@ function sheetTarget() {
   return ev ? { ev } : null;
 }
 
+const stRepKey = (st) => { const r = st.repeat; if (!r) return ''; if (r.freq === 'weekly' && r.byday && r.byday.length === 5 && !r.byday.includes(0) && !r.byday.includes(6)) return 'weekdays'; if (r.freq === 'weekly' && +r.interval === 2) return 'biweekly'; return r.freq; };
 function openSheet(s) {
   closePopover(true);
   if (ui.view !== 'agenda') go('agenda');
@@ -59,6 +60,7 @@ function sheetHTML() {
           : `<label class="sh-prop"><span>${icon('i-calendar')} Scadenza</span><input type="datetime-local" data-shf="due" value="${esc(st.due || '')}"></label>`}
           <label class="sh-prop"><span>${icon('i-clock')} Durata</span><select data-shf="duration">${[15, 30, 45, 60, 90, 120, 180, 240].map(m => `<option value="${m}" ${(+st.duration || 30) === m ? 'selected' : ''}>${m < 60 ? m + ' min' : (m / 60) + ' h'}</option>`).join('')}</select></label>
           <label class="sh-prop"><span>${icon('i-bell')} Promemoria</span><select data-shf="reminder">${REMINDERS.map(([v, l]) => `<option value="${v === null ? '' : v}" ${st.reminder === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="sh-prop"><span>${icon('i-refresh')} Ripeti</span><select data-shf="repeat">${[['', 'Mai'], ['daily', 'Ogni giorno'], ['weekdays', 'Nei giorni feriali'], ['weekly', 'Ogni settimana'], ['biweekly', 'Ogni 2 settimane'], ['monthly', 'Ogni mese'], ['yearly', 'Ogni anno']].map(([k, l]) => `<option value="${k}" ${stRepKey(st) === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <label class="sh-prop"><span>${icon('i-star')} Priorità</span><select data-shf="priority">${PRIO.map(([v, l]) => `<option value="${v}" ${(st.priority || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         </div>
 
@@ -90,7 +92,8 @@ function sheetHTML() {
   }
   const { ev } = t;
   const g = groupInfo(ev), a = accOf(ev), ro = isReadOnly(ev);
-  const s = parse(ev.start), e = parse(ev.end || ev.start);
+  const occ = ev.rrule && ui.sheet && ui.sheet.occ ? PromemoRecur.instance(ev, parse(ui.sheet.occ)) : null;
+  const s = parse((occ || ev).start), e = parse((occ || ev).end || (occ || ev).start);
   const p = proj(ev.projectId);
   const inv = ev.source?.extra?.list || [];
   const when = ev.allDay
@@ -113,6 +116,7 @@ function sheetHTML() {
       <div class="sh-props">
         ${ev.location ? `<div class="sh-prop"><span>${icon('i-pin')} Luogo</span><b>${/^online · https?:/i.test(ev.location) ? `<a href="#" data-sh="url" data-url="${esc(ev.location.replace(/^online · /i, ''))}">Collegamento online</a>` : esc(ev.location)}</b></div>` : ''}
         ${typeof travelSheetRow === 'function' ? travelSheetRow(ev) : ''}
+        ${ev.rrule ? `<div class="sh-prop"><span>${icon('i-refresh')} Si ripete</span><b>${esc(PromemoRecur.describe(ev.rrule))}${occ ? ` <button class="link" data-sh="ev-skip" data-occ="${occ._occ}">Salta questa volta</button>` : ''}</b></div>` : ''}
         <label class="sh-prop"><span>${icon('i-folder')} Progetto</span><select data-shf="ev-project"><option value="">Nessuno</option>${data.projects.filter(x => x.status !== 'archiviato' || x.id === ev.projectId).map(x => `<option value="${x.id}" ${x.id === ev.projectId ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select></label>
         <label class="sh-prop"><span>${icon('i-bell')} Promemoria</span><select data-shf="ev-reminder">${REMINDERS.map(([v, l]) => `<option value="${v === null ? '' : v}" ${ev.reminder === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       </div>
@@ -160,6 +164,7 @@ document.addEventListener('click', (e) => {
     const { ev } = t;
     if (a === 'ev-edit') modalEvent(ev);
     if (a === 'ev-del') actions['del-event']({ dataset: { id: ev.id } });
+    if (a === 'ev-skip') { ev.rrule = { ...ev.rrule, exdates: [...new Set([...(ev.rrule.exdates || []), b.dataset.occ])] }; ui.sheet = null; save(); render(); toast('Questa volta è saltata · Ctrl+Z per annullare'); }
     if (a === 'to-trace' && ev.memo) { const p = proj(ev.projectId); if (p) { p.traces.push({ id: uid(), title: `Appunti: ${ev.title}`, body: ev.memo, at: iso(new Date()) }); touch(p); save(); toast('Aggiunti alla timeline del progetto'); } }
   }
 });
@@ -183,6 +188,7 @@ document.addEventListener('change', (e) => {
     if (k === 'deadline') { st.deadline = f.value || null; delete st.autoDue; }
     if (k === 'reminder') { st.reminder = f.value === '' ? null : +f.value; delete st.notifiedAt; }
     if (k === 'priority') st.priority = f.value;
+    if (k === 'repeat') { const v = f.value; if (!v) delete st.repeat; else { const wd = st.due ? parse(st.due).getDay() : new Date().getDay(); st.repeat = v === 'weekdays' ? { freq: 'weekly', interval: 1, byday: [1, 2, 3, 4, 5] } : v === 'biweekly' ? { freq: 'weekly', interval: 2, byday: [wd] } : v === 'weekly' ? { freq: 'weekly', interval: 1, byday: [wd] } : { freq: v, interval: 1 }; if (!st.due && !st.auto) { const d = new Date(); d.setHours(9, 0, 0, 0); if (d < new Date()) d.setDate(d.getDate() + 1); st.due = iso(d); } } }
     touch(p); save(); refreshKeepFocus();
   } else {
     const ev = t.ev;
@@ -217,5 +223,5 @@ function autoGrow(el) { el.style.height = 'auto'; el.style.height = Math.min(520
 new MutationObserver(() => { const ta = document.querySelector('#sheet .sh-notes'); if (ta && !ta._g) { ta._g = true; autoGrow(ta); } }).observe(document.getElementById('view'), { childList: true, subtree: true });
 
 Object.assign(actions, {
-  sheet: (el) => openSheet(el.dataset.kind === 'ev' ? { kind: 'ev', id: el.dataset.id } : { kind: 'st', pid: el.dataset.pid, id: el.dataset.id }),
+  sheet: (el) => openSheet(el.dataset.kind === 'ev' ? { kind: 'ev', id: el.dataset.id, occ: el.dataset.occ || el.dataset.date || null } : { kind: 'st', pid: el.dataset.pid, id: el.dataset.id }),
 });

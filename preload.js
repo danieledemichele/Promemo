@@ -1,6 +1,17 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('promemo', {
+  log: (level, msg, src) => ipcRenderer.send('log:write', { level, msg: String(msg), src }),
+  logError: (where, msg, stack) => ipcRenderer.send('log:write', { level: 'error', src: 'ui:' + where, msg: String(msg), stack: stack ? String(stack) : undefined }),
+  snapList: () => ipcRenderer.invoke('snap:list'),
+  snapNow: () => ipcRenderer.invoke('snap:now'),
+  snapPeek: (n) => ipcRenderer.invoke('snap:peek', n),
+  snapRestore: (n) => ipcRenderer.invoke('snap:restore', n),
+  logStats: () => ipcRenderer.invoke('log:stats'),
+  logRead: () => ipcRenderer.invoke('log:read'),
+  logClear: () => ipcRenderer.invoke('log:clear'),
+  logExport: () => ipcRenderer.invoke('log:export'),
+  logOpen: () => ipcRenderer.invoke('log:open'),
   getData: () => ipcRenderer.invoke('data:get'),
   setData: (d) => ipcRenderer.invoke('data:set', d),
   exportData: () => ipcRenderer.invoke('data:export'),
@@ -73,6 +84,9 @@ contextBridge.exposeInMainWorld('promemo', {
   shortcutSet: (s) => ipcRenderer.invoke('shortcut:set', s),
   shortcutState: () => ipcRenderer.invoke('shortcut:state'),
   showMain: (r) => ipcRenderer.invoke('main:show', r),
+  psyncStatus: () => ipcRenderer.invoke('psync:status'),
+  psyncSet: (p) => ipcRenderer.invoke('psync:set', p),
+  psyncNow: () => ipcRenderer.invoke('psync:now'),
   mobileStatus: () => ipcRenderer.invoke('mobile:status'),
   mobileSet: (p) => ipcRenderer.invoke('mobile:set', p),
   mobileQr: (t) => ipcRenderer.invoke('mobile:qr', t),

@@ -8,7 +8,7 @@ const PRIO_W = { alta: 0, media: 1, '': 2, bassa: 3 };
 
 function planBusy(skipStep) {
   const busy = [];
-  for (const e of data.events) {
+  for (const e of PromemoRecur.expand(data.events, addDays(new Date(), -1), addDays(new Date(), 30))) {
     if (e.allDay || !e.start) continue;
     const s = parse(e.start), en = parse(e.end || e.start);
     if (en - s > 20 * 3600000) continue; // eventi di più giorni non bloccano le ore

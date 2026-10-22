@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f4f1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src * ; script-src 'self'">
+  <link rel="stylesheet" href="app.css">
+  <title>Promemo</title>
+</head>
+<body>
+  <header class="top"><img src="icon.png" alt=""><div class="grow"><b id="hello">Promemo</b><small id="sub"></small></div><button id="refresh" aria-label="Sincronizza">↻</button></header>
+  <main id="main"></main>
+  <form class="add" id="add"><input id="add-in" placeholder="Aggiungi: dentista martedì alle 9…" autocomplete="off" enterkeyhint="send"><button aria-label="Aggiungi">+</button></form>
+  <nav class="tabs"><button data-tab="oggi" class="on"><i>◉</i>Oggi</button><button data-tab="agenda"><i>▦</i>Agenda</button><button data-tab="compiti"><i>✓</i>Compiti</button><button data-tab="progetti"><i>▤</i>Progetti</button><button data-tab="altro"><i>⋯</i>Altro</button></nav>
+  <div class="sheet" id="sheet" hidden><div class="sheet-card"><div class="grab"></div><div id="sheet-body"></div></div></div>
+  <div class="toast" id="toast"></div>
+  <script src="scrypt.js"></script>
+  <script src="nlp.js"></script>
+  <script src="recur.js"></script>
+  <script src="syncmodel.js"></script>
+  <script src="core.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1493,3 +1493,25 @@ tr:hover .nact .icon-btn { opacity: 1; }
 .mb-qr svg, .mb-qr svg * { stroke-width: 1; stroke-linecap: butt; stroke-linejoin: miter; }
 .tg-ev.short .tg-ev-leave { display: none; }
 .modal-brief { max-height: 88vh; overflow: auto; }
+
+/* annulla, cestino, diagnostica */
+.toast.act { pointer-events: auto; display: flex; align-items: center; gap: 12px; }
+.toast-act { border: 0; background: rgba(255,255,255,.18); color: inherit; font-weight: 700; border-radius: 8px; padding: 3px 10px; }
+.toast-act:hover { background: rgba(255,255,255,.3); }
+.set-group.trash .set-txt div { display: flex; align-items: center; gap: 6px; }
+.set-group.trash svg { width: 14px; height: 14px; color: var(--text-2); }
+.btn.confirm { background: #e0352b !important; color: #fff !important; }
+.diag-kpis { display: flex; gap: 8px; margin-bottom: 10px; }
+.diag-kpis > div { flex: 1; background: var(--card); border: 1px solid var(--hair); border-radius: 12px; padding: 8px 12px; }
+.diag-kpis b { display: block; font-size: 22px; font-weight: 750; }
+.diag-kpis span { font-size: 12px; color: var(--text-2); }
+.diag-kpis .bad b { color: #e0352b; } .diag-kpis .warn b { color: #c9930a; }
+.diag-list { max-height: 260px; overflow: auto; }
+.diag-row { display: grid; grid-template-columns: 64px 110px 1fr; gap: 8px; padding: 6px 12px; font-size: 12px; border-bottom: 1px solid var(--hair); }
+.diag-row.error .diag-s { color: #e0352b; } .diag-row.warn .diag-s { color: #c9930a; }
+.diag-t { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.diag-s { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.diag-m { user-select: text; word-break: break-word; }
+.diag-log { max-height: 280px; overflow: auto; background: #1c1c1e; color: #e5e5ea; font: 11px/1.45 ui-monospace, 'DejaVu Sans Mono', monospace; padding: 10px; border-radius: 10px; user-select: text; white-space: pre-wrap; margin-top: 10px; }
+
+.mb-txt > b { display: block; margin-top: 4px; }

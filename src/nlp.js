@@ -55,6 +55,17 @@
     if (!out.location) take(new RegExp(`${B}(?:presso|in)\\s+((?:via|viale|piazza|corso|aula|palestra|studio|scuola|ufficio|sede)\\s[^,;]+?)(?=\\s*(?:[,;]|$|\\s+(?:alle|dalle|per|oggi|domani|ricord|avvis)))`, 'iu'), (m) => { out.location = m[1].trim().replace(/^./, c => c.toUpperCase()); });
     if (!out.location) take(new RegExp(`${B}presso\\s+([^,;]+?)(?=\\s*(?:[,;]|$|\\s+(?:alle|dalle|per|oggi|domani|ricord|avvis)))`, 'iu'), (m) => { out.location = m[1].trim(); });
 
+    // ripetizione: "ogni lunedì e mercoledì", "tutti i giorni", "ogni 2 settimane", "ogni mese", "fino al 20 dicembre", "per 10 volte"
+    const GD = "lunedì|lunedi|martedì|martedi|mercoledì|mercoledi|giovedì|giovedi|venerdì|venerdi|sabato|domenica";
+    take(new RegExp(`${B}(?:ogni|tutti i|tutte le)\\s+((?:(?:${GD})(?:\\s*,\\s*|\\s+e\\s+)?)+)`, 'iu'), (m) => { const ds = [...m[1].toLowerCase().replace(/ì/g, 'i').matchAll(/lunedi|martedi|mercoledi|giovedi|venerdi|sabato|domenica/g)].map(x => G_RE[x[0]]); out.rrule = { freq: 'weekly', interval: 1, byday: [...new Set(ds)] }; });
+    if (!out.rrule) take(new RegExp(`${B}(?:nei giorni feriali|dal lunedì al venerdì|tutti i giorni feriali|ogni giorno feriale)${E}`, 'iu'), () => { out.rrule = { freq: 'weekly', interval: 1, byday: [1, 2, 3, 4, 5] }; });
+    if (!out.rrule) take(new RegExp(`${B}(?:ogni giorno|tutti i giorni|quotidianamente)${E}`, 'iu'), () => { out.rrule = { freq: 'daily', interval: 1 }; });
+    if (!out.rrule) take(new RegExp(`${B}ogni\\s+(\\d+|due|tre|quattro)?\\s*(settiman[ae]|mes[ei]|ann[oi]|giorni)${E}`, 'iu'), (m) => { const n = m[1] ? num(m[1]) : 1; const f = /sett/i.test(m[2]) ? 'weekly' : /mes/i.test(m[2]) ? 'monthly' : /ann/i.test(m[2]) ? 'yearly' : 'daily'; out.rrule = { freq: f, interval: n || 1 }; });
+    if (out.rrule) {
+      take(new RegExp(`${B}fino\\s+al?l?\\s*([^,;]+?)(?=\\s*(?:[,;]|$|\\s+(?:alle|dalle|per|ricord|avvis|#|@)))`, 'iu'), (m) => { out._until = m[1]; });
+      take(new RegExp(`${B}per\\s+(\\d+)\\s+volte${E}`, 'iu'), (m) => { out.rrule.count = +m[1]; });
+    }
+
     // data
     const pickDate = (str) => {
       let d = null; const t = ' ' + str.toLowerCase().replace(/ì/g, 'i') + ' ';
@@ -72,6 +83,9 @@
     };
     const DATE_RE = new RegExp(`${B}(?:(?:oggi|domani|dopodomani|stasera|stamattina|stamani|stanotte)|(?:(?:tra|fra)\\s+(?:\\d+|un|una|due|tre|quattro|cinque|sei|sette|dieci)\\s+(?:giorn[oi]|settiman[ae]|mes[ei]))|(?:la\\s+)?(?:settimana prossima|prossima settimana)|(?:\\d{1,2}[\\/.-]\\d{1,2}(?:[\\/.-]\\d{2,4})?)|(?:(?:il\\s+|l')?\\d{1,2}°?\\s+(?:gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre|gen|feb|apr|mag|giu|lug|ago|set|ott|nov|dic)(?:\\s+\\d{4})?)|(?:(?:(?:il|di|questo|questa)\\s+)?(?:lunedì|lunedi|martedì|martedi|mercoledì|mercoledi|giovedì|giovedi|venerdì|venerdi|sabato|domenica)(?:\\s+prossim[oa])?)|(?:(?:il|l')\\s*\\d{1,2}(?=\\s|$)))${E}`, 'iu');
     take(DATE_RE, (m) => { out.date = pickDate(m[0]); if (/stasera|stanotte/i.test(m[0])) out._eve = true; if (/stamattina|stamani/i.test(m[0])) out._morn = true; });
+    if (out._until) { const u = pickDate(out._until); if (u) out.rrule.until = `${u.getFullYear()}-${pad(u.getMonth() + 1)}-${pad(u.getDate())}`; delete out._until; }
+    // prima occorrenza di "ogni lunedì e mercoledì": il prossimo di quei giorni
+    if (out.rrule && out.rrule.byday && !out.date) { for (let i = 0; i < 7; i++) { const d = addD(day0, i); if (out.rrule.byday.includes(d.getDay())) { out.date = d; break; } } }
     if (deadlineText) { const dd = pickDate(deadlineText); const tm = deadlineText.match(/(\d{1,2})(?::|\.)(\d{2})|alle\s+(\d{1,2})/); const d2 = dd || out.date || addD(day0, 7); out.deadline = new Date(d2); if (tm) out.deadline.setHours(+(tm[1] || tm[3]), +(tm[2] || 0)); else out.deadline.setHours(23, 59); }
 
     // orario: "dalle 10 alle 12", "alle 16:30", "alle 9 e mezza", "ore 18", "a mezzogiorno"
@@ -90,6 +104,7 @@
 
     // composizione
     if (!out.kind) out.kind = out.time ? 'appuntamento' : out.date ? 'evento' : 'passo';
+    if (out.rrule && out.kind === 'passo') { out.repeat = out.rrule; delete out.rrule; }
     if (out.kind === 'passo') {
       if (out.deadline && !out.time) out.auto = true;
       if (out.date || out.time) { const d = new Date(out.date || day0); const [h, mi] = out.time || [9, 0]; d.setHours(h, mi, 0, 0); out.due = iso(d); }
@@ -125,6 +140,9 @@
       parts.push(['tipo', r.allDay ? 'Evento di un giorno' : 'Appuntamento']);
       parts.push(['quando', r.allDay ? fd(r.start) : `${fd(r.start)} · ${fh(r.start)}–${fh(r.end)}`]);
     }
+    const rr = r.rrule || r.repeat;
+    if (rr && root.PromemoRecur) parts.push(['ripete', root.PromemoRecur.describe(rr)]);
+    else if (rr) { try { parts.push(['ripete', require('./recur.js').describe(rr)]); } catch { parts.push(['ripete', rr.freq]); } }
     if (r.location) parts.push(['luogo', r.location]);
     if (r.reminder != null) parts.push(['avviso', r.reminder >= 1440 ? `${r.reminder / 1440} g prima` : r.reminder >= 60 ? `${r.reminder / 60} h prima` : `${r.reminder} min prima`]);
     if (r.priority) parts.push(['priorità', r.priority]);

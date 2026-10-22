@@ -16,7 +16,7 @@ function statRange() {
 // minuti di ogni evento con orario dentro l'intervallo
 function timedEvents(a, b, pred = () => true) {
   const out = [];
-  for (const e of data.events) {
+  for (const e of PromemoRecur.expand(data.events, addDays(a, -1), b)) {
     if (e.allDay || !e.start || !pred(e)) continue;
     const s = parse(e.start), en = parse(e.end || e.start);
     if (en - s > 20 * 3600000 || en <= a || s >= b) continue;

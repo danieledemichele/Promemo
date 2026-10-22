@@ -45,6 +45,7 @@ function createUpdater({ app, send, onLog = () => {} }) {
       return pub();
     } catch (e) {
       state.error = e.name === 'AbortError' ? 'GitHub non risponde.' : e.cause ? 'Non riesco a raggiungere GitHub: sei offline?' : e.message;
+      onLog(`controllo aggiornamenti: ${state.error}`, true);
       return pub();
     } finally { state.checking = false; state.checkedAt = new Date().toISOString(); emit(); }
   }
@@ -95,6 +96,7 @@ function createUpdater({ app, send, onLog = () => {} }) {
       throw new Error('manual');
     } catch (e) {
       state.error = e.message === 'manual' ? '' : e.message;
+      if (state.error) onLog(`installazione aggiornamento: ${state.error}`, true);
       if (e.message === 'manual') { require('electron').shell.openExternal(u.url); }
       return pub();
     } finally { state.installing = false; state.phase = null; if (!state.error) state.progress = null; emit(); }

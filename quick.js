@@ -25,10 +25,12 @@ function createFromText(data, text, { pid } = {}) {
     const st = { id: 's-' + uid(), text: r.title, due: r.due || null, reminder: r.reminder ?? (r.due && !r.auto ? 0 : null), done: false, duration: r.duration || (r.auto ? 60 : 30), qrev };
     if (r.priority) st.priority = r.priority;
     if (r.auto) { st.auto = true; st.deadline = r.deadline || null; }
+    if (r.repeat) { st.repeat = r.repeat; if (!st.due) { const d = new Date(); d.setHours(9, 0, 0, 0); if (d < new Date()) d.setDate(d.getDate() + 1); st.due = iso(d); } }
     p.steps.push(st); p.updatedAt = iso(new Date());
     return { kind: 'passo', id: st.id, pid: p.id, title: r.title, text: nlp.describe(r).map(x => x[1]).join(' · '), parsed: r };
   }
   const e = { id: 'e-' + uid(), title: r.title, kind: r.kind, projectId: r.projectId || '', allDay: !!r.allDay, start: r.start, end: r.end, location: r.location || '', reminder: r.reminder ?? (r.allDay ? null : 15), notes: '', qrev };
+  if (r.rrule) e.rrule = r.rrule;
   const dc = data.settings.defaultCalendar;
   if (dc) { const [acc, ...c] = dc.split('|'); const a = data.accounts.find(x => x.id === acc && x.enabled); if (a) e.pushTo = { acc, cal: c.join('|') }; }
   data.events.push(e);

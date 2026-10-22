@@ -91,6 +91,10 @@ function localGroup(p) {
   return { key: 'local::', color: data.settings.localColor || '#e5562a', name: 'Personale', visible: !hiddenLocal().includes('') };
 }
 function groupInfo(e) {
+  if (e.source && DAYIDX) { const ck = `${e.source.acc}|${e.source.group}|${e.source.cal}`; let v = DAYIDX.g.get(ck); if (!v) { v = groupInfoRaw(e); DAYIDX.g.set(ck, v); } return v; }
+  return groupInfoRaw(e);
+}
+function groupInfoRaw(e) {
   if (e.source) {
     const a = (data.accounts || []).find(x => x.id === e.source.acc);
     const g = a && (a.groups || []).find(x => x.id === e.source.group);
@@ -114,36 +118,56 @@ function nextStep(p) {
 // ---------- Persistenza ----------
 let saveTimer = null, dirty = false;
 function save() {
+  if (typeof beforeSave === 'function') beforeSave();
   dirty = true;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     dirty = false;
     const r = await api.setData(data);
     if (!dirty && r && r.rev) Object.assign(data, r); // rev, account ed eventi riconciliati dal processo principale
+    if (typeof afterSave === 'function') afterSave();
   }, 150);
 }
 function touch(p) { p.updatedAt = iso(new Date()); }
 
 function toast(msg) {
   const t = $('#toast');
-  t.textContent = msg; t.classList.add('show');
+  t.textContent = msg; t.classList.remove('act'); t.classList.add('show');
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
 // ---------- Elementi del calendario ----------
 // Restituisce gli elementi (appuntamenti, eventi, passi con scadenza) che cadono nel giorno d
+// indice per giorno, costruito una volta per ogni ridisegno: con migliaia di eventi le viste restano veloci
+let DAYIDX = null;
+function buildDayIdx() {
+  const m = new Map(), rec = [], st = new Map();
+  const push = (map, k, v) => { let a = map.get(k); if (!a) map.set(k, a = []); a.push(v); };
+  for (const e of data.events) {
+    if (e.rrule) { rec.push(e); continue; }
+    const s = parse(e.start); if (!s) continue;
+    const en = parse(e.end || e.start);
+    let d = startOfDay(s); const last = startOfDay(en);
+    for (let n = 0; d <= last && n < 400; n++, d = addDays(d, 1)) push(m, dayKey(d), e);
+  }
+  for (const p of data.projects) { if (p.status === 'archiviato') continue; for (const x of p.steps) if (x.due) push(st, x.due.slice(0, 10), [p, x]); }
+  return { m, rec, st, g: new Map() };
+}
 function itemsOn(d, filter = { appuntamento: true, evento: true, passo: true }) {
   const k = dayKey(d);
   const out = [];
-  for (const e of data.events) {
+  const src = DAYIDX ? (DAYIDX.m.get(k) || []).concat(DAYIDX.rec) : data.events;
+  for (const e of src) {
     if (!filter[e.kind]) continue;
     if (!groupInfo(e).visible) continue;
+    if (e.rrule) { if (!PromemoRecur.occursOn(e.rrule, e.start, d)) continue; const inst = PromemoRecur.instance(e, d); out.push({ type: e.kind, ev: inst, sort: e.allDay ? '0' : inst.start }); continue; }
     const s = dayKey(parse(e.start));
     const en = dayKey(parse(e.end || e.start));
     if (s <= k && k <= en) out.push({ type: e.kind, ev: e, sort: e.allDay ? '0' : e.start });
   }
   if (filter.passo) {
-    for (const p of data.projects) {
+    if (DAYIDX) { for (const [p, st] of DAYIDX.st.get(k) || []) if (localGroup(p).visible) out.push({ type: 'passo', step: st, project: p, sort: st.due }); }
+    else for (const p of data.projects) {
       if (p.status === 'archiviato' || !localGroup(p).visible) continue;
       for (const st of p.steps) {
         if (st.due && dayKey(parse(st.due)) === k) out.push({ type: 'passo', step: st, project: p, sort: st.due });
@@ -233,8 +257,10 @@ function projectCard(p, opts = {}) {
 function remindersList() {
   const out = [];
   const now = new Date();
-  for (const e of data.events) {
-    if (e.reminder === null || e.reminder === undefined) continue;
+  for (const e0 of data.events) {
+    if (e0.reminder === null || e0.reminder === undefined) continue;
+    const e = e0.rrule ? PromemoRecur.between(e0, now, addDays(now, 60))[0] : e0;
+    if (!e) continue;
     if (parse(e.end || e.start) < startOfDay(now) || !groupInfo(e).visible) continue;
     out.push({ kind: 'ev', when: parse(e.start), title: e.title, sub: proj(e.projectId)?.title, ev: e });
   }
@@ -671,6 +697,7 @@ function layoutDay(list) {
 
 function canEdit(it) {
   if (it.step) return true;
+  if (it.ev.rrule) return false; // le ripetizioni si modificano dalla scheda
   if (!it.ev.source) return true;
   return !isReadOnly(it.ev);
 }
@@ -1042,6 +1069,10 @@ function render() {
   try { renderNow(); } finally { rendering = false; }
 }
 function renderNow() {
+  DAYIDX = buildDayIdx();
+  try { renderInner(); } finally { DAYIDX = null; }
+}
+function renderInner() {
   applySidebar();
   renderSidebar();
   const v = $('#view');
@@ -1157,6 +1188,7 @@ function eventFormHTML(ev, preset = {}, compact = false) {
         <label class="field"><span>Fine</span><input name="end" type="${e0.allDay ? 'date' : 'datetime-local'}" value="${e0.allDay ? dayKey(e) : iso(e)}" required ${dis}></label>
       </div>
       <label class="field"><span>Luogo</span><input name="location" value="${esc(e0.location)}" placeholder="Facoltativo" ${dis}></label>
+      ${ro ? '' : repeatFieldHTML(e0.rrule, s)}
       <div class="field-row">
         <label class="field"><span>Promemoria</span>${remSelect(e0.reminder)}</label>
         <label class="field"><span>Progetto</span>${projSelect(e0.projectId)}</label>
@@ -1172,6 +1204,28 @@ function eventFormHTML(ev, preset = {}, compact = false) {
       </div>
     </form>`;
 }
+
+// campo "Ripeti" (eventi e compiti)
+function repeatFieldHTML(rule, start) {
+  const r = rule || {}; const wd = start ? start.getDay() : new Date().getDay();
+  const v = !r.freq ? '' : r.freq === 'weekly' && +r.interval === 2 ? 'biweekly' : r.freq === 'weekly' && r.byday && r.byday.length === 5 && !r.byday.includes(0) && !r.byday.includes(6) ? 'weekdays' : r.freq;
+  const days = r.byday && r.byday.length ? r.byday : [wd];
+  const D = [[1, 'L'], [2, 'M'], [3, 'M'], [4, 'G'], [5, 'V'], [6, 'S'], [0, 'D']];
+  return `<div class="field rep-field"><span>Ripeti</span><div class="row" style="gap:8px;flex-wrap:wrap">
+    <select name="rfreq" class="rep-sel">${[['', 'Mai'], ['daily', 'Ogni giorno'], ['weekdays', 'Nei giorni feriali'], ['weekly', 'Ogni settimana'], ['biweekly', 'Ogni 2 settimane'], ['monthly', 'Ogni mese'], ['yearly', 'Ogni anno']].map(([k, l]) => `<option value="${k}" ${v === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <div class="day-pick rep-days" ${v === 'weekly' || v === 'biweekly' ? '' : 'hidden'}>${D.map(([d, l]) => `<button type="button" data-rd="${d}" class="${days.includes(d) ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <label class="rep-until" ${v ? '' : 'hidden'}>fino al <input type="date" name="runtil" value="${esc(r.until || '')}"></label>
+    <input type="hidden" name="rdays" value="${days.join(',')}"></div></div>`;
+}
+function readRepeat(fd) {
+  const f = fd.get('rfreq'); if (!f) return null;
+  const days = String(fd.get('rdays') || '').split(',').filter(x => x !== '').map(Number);
+  const r = f === 'weekdays' ? { freq: 'weekly', interval: 1, byday: [1, 2, 3, 4, 5] } : f === 'biweekly' ? { freq: 'weekly', interval: 2, byday: days } : f === 'weekly' ? { freq: 'weekly', interval: 1, byday: days } : { freq: f, interval: 1 };
+  if (fd.get('runtil')) r.until = fd.get('runtil');
+  return r;
+}
+document.addEventListener('change', (e) => { const sel = e.target.closest('.rep-sel'); if (!sel) return; const box = sel.closest('.rep-field'); box.querySelector('.rep-days').hidden = !['weekly', 'biweekly'].includes(sel.value); box.querySelector('.rep-until').hidden = !sel.value; });
+document.addEventListener('click', (e) => { const b = e.target.closest('.rep-days [data-rd]'); if (!b) return; b.classList.toggle('on'); const box = b.closest('.rep-field'); const on = [...box.querySelectorAll('.rep-days .on')].map(x => x.dataset.rd); if (!on.length) { b.classList.add('on'); on.push(b.dataset.rd); } box.querySelector('[name=rdays]').value = on.join(','); });
 
 function bindEventForm(m) {
   const ad = m.querySelector('[name=allDay]');
@@ -1380,7 +1434,7 @@ function initTimeGrid() {
     }
     const el = d.el;
     if (!d.moved) { // semplice clic: apri
-      openSheet(el.dataset.kind === 'ev' ? { kind: 'ev', id: el.dataset.id } : { kind: 'st', pid: el.dataset.pid, id: el.dataset.id });
+      openSheet(el.dataset.kind === 'ev' ? { kind: 'ev', id: el.dataset.id, occ: el.dataset.date || null } : { kind: 'st', pid: el.dataset.pid, id: el.dataset.id });
       return;
     }
     const dk = dayKey(addDays(parse(el.dataset.date), d.dday || 0));
@@ -1839,10 +1893,13 @@ const submits = {
     if (parse(end) < parse(start)) end = start;
     const obj = { title: fd.get('title').trim(), kind: fd.get('kind'), projectId: fd.get('projectId'), allDay,
       start: allDay ? start.slice(0, 10) + 'T00:00' : start, end: allDay ? end.slice(0, 10) + 'T23:59' : end,
-      location: fd.get('location').trim(), reminder: readRem(fd.get('reminder')), notes: fd.get('notes').trim() };
+      location: fd.get('location').trim(), reminder: readRem(fd.get('reminder')), notes: fd.get('notes').trim(), rrule: readRepeat(fd) };
+    if (obj.rrule && cur && cur.rrule && cur.rrule.exdates) obj.rrule.exdates = cur.rrule.exdates;
+    if (!obj.rrule) delete obj.rrule;
     if (f.dataset.id) {
       const e = data.events.find(x => x.id === f.dataset.id);
       if (e.start !== obj.start || e.reminder !== obj.reminder) delete e.notifiedAt;
+      if (!obj.rrule) delete e.rrule;
       Object.assign(e, obj);
       const cv = fd.get('calendar');
       if (!e.source) { if (cv) { const [acc, ...c] = cv.split('|'); e.pushTo = { acc, cal: c.join('|') }; } else delete e.pushTo; }
@@ -1973,7 +2030,7 @@ document.querySelector('.toolbar').addEventListener('dblclick', (e) => { if (e.t
 window.addEventListener('blur', () => document.body.classList.add('blurred'));
 window.addEventListener('focus', () => document.body.classList.remove('blurred'));
 
-api.onDataChanged((d) => { if (dirty) return; data = d; if (document.activeElement?.closest('#sheet textarea, #sheet [contenteditable], .ai-drawer input, .ndb input, .ndb select')) return; render(); });
+api.onDataChanged((d) => { if (dirty) return; data = d; if (typeof historyReset === 'function') historyReset(); if (document.activeElement?.closest('#sheet textarea, #sheet [contenteditable], .ai-drawer input, .ndb input, .ndb select')) return; render(); });
 api.onSyncStatus((st) => { syncing = !!st.syncing; renderSyncButton(); if (ui.view === 'account' && $('#modal-backdrop').hidden) render(); });
 api.onNavigate((r) => {
   if (r.action === 'new') return modalNew();

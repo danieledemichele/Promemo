@@ -76,7 +76,7 @@ function createBackup(ctx) {
     return {
       label: 'Cartella',
       async put(name, buf) { fs.mkdirSync(dir, { recursive: true }); const t = path.join(dir, name + '.tmp'); fs.writeFileSync(t, buf); fs.renameSync(t, path.join(dir, name)); },
-      async list() { if (!fs.existsSync(dir)) return []; return fs.readdirSync(dir).filter(f => f.endsWith(EXT)).map(f => { const st = fs.statSync(path.join(dir, f)); return { name: f, size: st.size, mtime: st.mtime.toISOString() }; }); },
+      async list(ext = EXT) { if (!fs.existsSync(dir)) return []; return fs.readdirSync(dir).filter(f => f.endsWith(ext)).map(f => { const st = fs.statSync(path.join(dir, f)); return { name: f, size: st.size, mtime: st.mtime.toISOString() }; }); },
       async get(name) { return fs.readFileSync(path.join(dir, path.basename(name))); },
       async del(name) { fs.unlinkSync(path.join(dir, path.basename(name))); },
       async test() { fs.mkdirSync(dir, { recursive: true }); fs.accessSync(dir, fs.constants.W_OK); return `Scrivo in ${dir}`; },
@@ -96,7 +96,7 @@ function createBackup(ctx) {
       label: 'WebDAV',
       async ensure() { const r = await req(base, { method: 'MKCOL', headers: H() }); if (![201, 405, 301, 200].includes(r.status) && r.status !== 409) await check(r, 'creazione cartella'); },
       async put(name, buf) { await this.ensure(); await check(await req(base + encodeURIComponent(name), { method: 'PUT', headers: H({ 'content-type': 'application/octet-stream' }), body: buf }, 120000), 'caricamento'); },
-      async list() {
+      async list(ext = EXT) {
         const r = await check(await req(base, { method: 'PROPFIND', headers: H({ depth: '1', 'content-type': 'application/xml' }), body: '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getlastmodified/><d:getcontentlength/></d:prop></d:propfind>' }), 'elenco');
         const xml = await bodyText(r);
         const out = [];
@@ -104,7 +104,7 @@ function createBackup(ctx) {
           const blk = m[0];
           const href = decodeURIComponent((blk.match(/<(?:\w+:)?href>([^<]+)</i) || [])[1] || '');
           const name = href.replace(/\/+$/, '').split('/').pop();
-          if (!name.endsWith(EXT)) continue;
+          if (!name.endsWith(ext)) continue;
           const size = +((blk.match(/getcontentlength>(\d+)</i) || [])[1] || 0);
           const lm = (blk.match(/getlastmodified>([^<]+)</i) || [])[1];
           out.push({ name, size, mtime: lm ? new Date(lm).toISOString() : '' });
@@ -137,12 +137,12 @@ function createBackup(ctx) {
     return {
       label: 'Dropbox',
       async put(name, buf) { await call(`${DBX_CONTENT}/2/files/upload`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'dropbox-api-arg': JSON.stringify({ path: '/' + name, mode: 'overwrite', mute: true }) }, body: buf }, 'caricamento'); },
-      async list() {
+      async list(ext = EXT) {
         let r;
         try { r = await call(`${DBX_API}/2/files/list_folder`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: '' }) }, 'elenco'); }
         catch (e) { if (e.notFound) return []; throw e; }
         const j = await r.json();
-        return (j.entries || []).filter(e => e['.tag'] === 'file' && e.name.endsWith(EXT)).map(e => ({ name: e.name, size: e.size, mtime: e.server_modified }));
+        return (j.entries || []).filter(e => e['.tag'] === 'file' && e.name.endsWith(ext)).map(e => ({ name: e.name, size: e.size, mtime: e.server_modified }));
       },
       async get(name) { const r = await call(`${DBX_CONTENT}/2/files/download`, { method: 'POST', headers: { 'dropbox-api-arg': JSON.stringify({ path: '/' + name }) } }, 'scaricamento'); return Buffer.from(await r.arrayBuffer()); },
       async del(name) { await call(`${DBX_API}/2/files/delete_v2`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: '/' + name }) }, 'eliminazione'); },
@@ -155,10 +155,10 @@ function createBackup(ctx) {
     return {
       label: 'rclone',
       async put(name, buf) { await run(RCLONE, ['rcat', `${remote}/${name}`], buf); },
-      async list() {
+      async list(ext = EXT) {
         let out;
         try { out = await run(RCLONE, ['lsjson', remote]); } catch (e) { if (/not found|directory not found/i.test(e.message)) return []; throw e; }
-        return JSON.parse(out.toString() || '[]').filter(e => !e.IsDir && e.Name.endsWith(EXT)).map(e => ({ name: e.Name, size: e.Size, mtime: e.ModTime }));
+        return JSON.parse(out.toString() || '[]').filter(e => !e.IsDir && e.Name.endsWith(ext)).map(e => ({ name: e.Name, size: e.Size, mtime: e.ModTime }));
       },
       async get(name) { return run(RCLONE, ['cat', `${remote}/${name}`]); },
       async del(name) { await run(RCLONE, ['deletefile', `${remote}/${name}`]); },
@@ -274,7 +274,7 @@ function createBackup(ctx) {
     return true;
   }
 
-  return { backupNow, listBackups, readBackup, checkRemote, test: async (c) => dest(c).test(), dropboxStart, dropboxFinish, savePass, pack, unpack, readHeader, payload };
+  return { backupNow, listBackups, readBackup, checkRemote, test: async (c) => dest(c).test(), dropboxStart, dropboxFinish, savePass, pack, unpack, readHeader, payload, dest, dbxToken, pass: () => ctx.secret('backup:pass') };
 }
 
 module.exports = { createBackup, EXT };

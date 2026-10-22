@@ -31,7 +31,7 @@ function windowRange() {
 
 // campi "condivisi" con il servizio esterno: se cambiano, l'evento va inviato
 const CORE = ['title', 'start', 'end', 'allDay', 'location', 'notes'];
-const coreHash = (e) => crypto.createHash('sha1').update(JSON.stringify(CORE.map(k => e[k] ?? ''))).digest('hex').slice(0, 16);
+const coreHash = (e) => crypto.createHash('sha1').update(JSON.stringify(CORE.map(k => e[k] ?? '')) + (e.rrule ? JSON.stringify(e.rrule) : '')).digest('hex').slice(0, 16);
 
 async function readJson(res) {
   const t = await res.text();
@@ -147,7 +147,14 @@ function createSync(ctx) {
       const q = new URLSearchParams({ singleEvents: 'true', timeMin: from.toISOString(), timeMax: to.toISOString(), maxResults: '2500', showDeleted: 'false' });
       if (pageToken) q.set('pageToken', pageToken);
       const j = await gFetch(acc, `/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events?${q}`);
+      // le ripetizioni create in Promemo restano una sola serie (Google le restituisce già espanse)
+      const own = new Map(ctx.data().events.filter(x => x.rrule && x.source && x.source.acc === acc.id && x.source.cal === cal.id).map(x => [x.source.rid, x]));
       for (const ev of j.items || []) {
+        if (ev.recurringEventId && own.has(ev.recurringEventId)) {
+          const x = own.get(ev.recurringEventId);
+          if (!items.some(i => i.rid === ev.recurringEventId)) items.push({ rid: ev.recurringEventId, title: x.title, start: x.start, end: x.end, allDay: x.allDay, location: x.location || '', notes: x.notes || '', url: x.source.url || '', group: cal.id, keep: true });
+          continue;
+        }
         if (ev.status === 'cancelled' || !ev.start) continue;
         if (skipCalendlyCopy((ev.description || '') + ' ' + (ev.location || ''))) continue;
         const s = gToLocal(ev.start, false), e = gToLocal(ev.end || ev.start, true);
@@ -164,6 +171,7 @@ function createSync(ctx) {
       summary: e.title, location: e.location || '', description: e.notes || '',
       start: e.allDay ? { date: dayStr(s) } : { dateTime: isoOffset(s) },
       end: e.allDay ? { date: dayStr(addDays(en, 1)) } : { dateTime: isoOffset(en < s ? s : en) },
+      ...(e.rrule ? { recurrence: [require('./src/recur.js').toRRULE(e.rrule), ...(e.rrule.exdates || []).map(x => e.allDay ? `EXDATE;VALUE=DATE:${x.replace(/-/g, '')}` : `EXDATE;TZID=${Intl.DateTimeFormat().resolvedOptions().timeZone}:${x.replace(/-/g, '')}T${e.start.slice(11, 16).replace(':', '')}00`)] } : {}),
     };
   }
 
@@ -521,6 +529,7 @@ function createSync(ctx) {
         } catch (e) {
           const a = ctx.data().accounts.find(x => x.id === id);
           if (a) a.error = e.cause ? `Rete non raggiungibile (${e.cause.code || e.message})` : e.message;
+          console.warn(`sincronizzazione ${a ? a.provider + ' «' + a.name + '»' : id}: ${a ? a.error : e.message}`);
         }
         ctx.commit();
       }

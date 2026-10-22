@@ -49,14 +49,16 @@ function createMobile(ctx) {
       const p = d.projects.find(x => x.id === e.projectId); const c = p && d.categories.find(x => x.id === p.category);
       return { name: c ? c.name : 'Personale', color: c ? ({ orange: '#e5562a', green: '#2f9e5b', blue: '#2f7ae5', purple: '#8e5bd9', pink: '#d9467a', teal: '#1f9aa5', yellow: '#c9930a', gray: '#8e8e93' }[c.color] || c.color) : (d.settings.localColor || '#e5562a'), visible: !hidden.has(c ? c.id : '') };
     };
+    const Recur = require('./src/recur.js');
+    const evAll = Recur.expand(d.events, new Date(now.getTime() - 864e5), new Date(now.getTime() + 15 * 864e5));
     const days = [];
     for (let i = 0; i < 14; i++) {
       const day = new Date(now); day.setDate(day.getDate() + i); const k = dk(day);
       const items = [];
-      for (const e of d.events) {
+      for (const e of evAll) {
         if (!e.start) continue; const s = e.start.slice(0, 10), en = (e.end || e.start).slice(0, 10);
         if (s > k || en < k) continue; const g = groupOf(e); if (!g.visible) continue;
-        const tr = d.travel && d.travel[e.id];
+        const tr = d.travel && d.travel[e._occ ? `${e.id}@${e._occ}` : e.id];
         items.push({ type: 'ev', id: e.id, title: e.title, allDay: !!e.allDay || s !== en, start: e.start, end: e.end, location: e.location || '', color: g.color, group: g.name, leave: tr && tr.leaveAt && !tr.same && (d.settings.travel || {}).enabled ? tr.leaveAt.slice(11, 16) : null });
       }
       for (const p of d.projects) { if (p.status === 'archiviato') continue; for (const st of p.steps) if (st.due && st.due.slice(0, 10) === k) items.push({ type: 'st', id: st.id, pid: p.id, title: st.text, start: st.due, done: !!st.done, auto: !!st.auto, project: p.title, color: '#8e8e93' }); }
@@ -71,6 +73,10 @@ function createMobile(ctx) {
 
   function handler(req, res) {
     const u = new URL(req.url, 'http://x');
+    // l'app Android (origine http://localhost) parla con il computer: consento solo le sue origini
+    const origin = req.headers.origin || '';
+    if (/^(https?|capacitor):\/\/localhost(:\d+)?$/.test(origin)) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Access-Control-Allow-Headers', 'X-Promemo-Key, Content-Type'); res.setHeader('Access-Control-Allow-Methods', 'GET, POST'); res.setHeader('Vary', 'Origin'); }
+    if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     const send = (code, body, type = 'application/json; charset=utf-8') => { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }); res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)); };
     if (req.method === 'GET' && FILES[u.pathname]) {
       const [f, type] = FILES[u.pathname];
@@ -81,12 +87,22 @@ function createMobile(ctx) {
     if (!ctx.data()) return send(423, { error: 'Promemo è bloccata sul computer' });
     seen[(req.headers['user-agent'] || '').slice(0, 80)] = new Date().toISOString();
     if (req.method === 'GET' && u.pathname === '/api/state') return send(200, state());
+    if (req.method === 'GET' && u.pathname === '/api/sync/config') {
+      if (!ctx.sync || !ctx.sync.enabled()) return send(409, { error: 'Attiva la sincronizzazione nelle impostazioni di Promemo sul computer' });
+      return Promise.resolve(ctx.sync.config()).then(c => send(200, { cloud: c, desktop: ctx.sync.state().dev }));
+    }
     if (req.method !== 'POST') return send(405, { error: 'metodo non ammesso' });
     let body = '';
-    req.on('data', (c) => { body += c; if (body.length > 20000) req.destroy(); });
+    const limit = u.pathname === '/api/sync' ? 30 * 1024 * 1024 : 20000;
+    req.on('data', (c) => { body += c; if (body.length > limit) req.destroy(); });
     req.on('end', () => {
       let j = {}; try { j = JSON.parse(body || '{}'); } catch { return send(400, { error: 'richiesta non valida' }); }
       try {
+        if (u.pathname === '/api/sync') {
+          if (!ctx.sync || !ctx.sync.enabled()) return send(409, { error: 'Attiva la sincronizzazione nelle impostazioni di Promemo sul computer' });
+          const n = j.state ? ctx.sync.merge(j.state) : 0;
+          return send(200, { ok: true, merged: n, state: ctx.sync.state() });
+        }
         if (u.pathname === '/api/add') { const r = ctx.quickAdd(String(j.text || ''), { pid: j.pid }); return send(200, { ok: true, title: r.title, text: r.text }); }
         if (u.pathname === '/api/step') {
           const p = ctx.data().projects.find(x => x.id === j.pid); const st = p && p.steps.find(x => x.id === j.id);

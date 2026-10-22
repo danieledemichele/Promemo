@@ -79,24 +79,26 @@ function createTravel(ctx) {
     busy = true;
     try {
       const now = Date.now(), until = now + 36 * 3600000;
-      const evs = d.events.filter(e => !e.allDay && e.start && !e.tripRef).map(e => ({ e, s: new Date(e.start).getTime(), en: new Date(e.end || e.start).getTime() }))
+      const Recur = require('./src/recur.js');
+      const evs = Recur.expand(d.events, new Date(now - 864e5), new Date(until)).filter(e => !e.allDay && e.start && !e.tripRef).map(e => ({ e, s: new Date(e.start).getTime(), en: new Date(e.end || e.start).getTime() }))
         .filter(x => x.en > now - 3600000 && x.s < until).sort((a, b) => a.s - b.s);
       const out = { ...(d.travel || {}) }; let n = 0;
       for (let i = 0; i < evs.length; i++) {
         const { e, s } = evs[i];
-        if (!e.location) { delete out[e.id]; continue; }
+        const tid = e._occ ? `${e.id}@${e._occ}` : e.id;
+        if (!e.location) { delete out[tid]; continue; }
         const prev = [...evs.slice(0, i)].reverse().find(x => x.e.location && x.en <= s && s - x.en < 3 * 3600000 && new Date(x.s).toDateString() === new Date(s).toDateString());
         const key = `${e.location}|${prev ? prev.e.location : ''}|${c.mode}|${c.home ? c.home.lat + ',' + c.home.lon : ''}`;
-        if (out[e.id] && out[e.id].key === key && out[e.id].start === e.start) continue;
+        if (out[tid] && out[tid].key === key && out[tid].start === e.start) continue;
         try {
           const leg = await legFor(e, prev && prev.e);
-          if (!leg) { delete out[e.id]; continue; }
+          if (!leg) { delete out[tid]; continue; }
           const leave = leg.min != null ? new Date(s - (leg.min + (leg.same ? 0 : c.buffer)) * 60000) : null;
-          out[e.id] = { ...leg, key, start: e.start, leaveAt: leave ? iso(leave) : null, notified: out[e.id] && out[e.id].start === e.start ? out[e.id].notified : null };
+          out[tid] = { ...leg, key, start: e.start, leaveAt: leave ? iso(leave) : null, notified: out[tid] && out[tid].start === e.start ? out[tid].notified : null };
           n++;
-        } catch (err) { out[e.id] = { error: err.message, key: null, start: e.start }; }
+        } catch (err) { out[tid] = { error: err.message, key: null, start: e.start }; console.warn(`tempo di viaggio per «${e.location}»: ${err.message}`); }
       }
-      for (const id of Object.keys(out)) if (!d.events.some(e => e.id === id)) delete out[id];
+      for (const id of Object.keys(out)) if (!d.events.some(e => e.id === id.split('@')[0]) || (out[id].start && out[id].start < iso(new Date(now - 864e5)))) delete out[id];
       d.travel = out;
       if (n) ctx.commit();
       return n;
@@ -112,7 +114,7 @@ function createTravel(ctx) {
       if (!t.leaveAt || t.same || t.notified === t.leaveAt) continue;
       const at = new Date(t.leaveAt).getTime();
       if (at - 5 * 60000 <= now && now < at + 20 * 60000) {
-        const e = d.events.find(x => x.id === id); if (!e) continue;
+        const e0 = d.events.find(x => x.id === id.split('@')[0]); if (!e0) continue; const e = { ...e0, start: t.start };
         ctx.notify(now >= at ? `Esci ora · ${e.title}` : `Esci alle ${t.leaveAt.slice(11, 16)} · ${e.title}`, `${t.min} min ${MODE_TXT[t.mode] || ''} da ${t.from}${t.km ? ` (${String(t.km).replace('.', ',')} km)` : ''}\nInizia alle ${e.start.slice(11, 16)}${e.location ? ' · ' + e.location : ''}`, { view: 'agenda', date: e.start.slice(0, 10) });
         t.notified = t.leaveAt; ch = true;
       }

@@ -1,0 +1,22 @@
+{
+  "name": "promemo-android",
+  "version": "1.12.0",
+  "private": true,
+  "description": "Promemo per Android",
+  "scripts": {
+    "build": "node build.js",
+    "sync": "node build.js && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/local-notifications": "^8.3.1",
+    "@capacitor/preferences": "^8.0.1",
+    "scrypt-js": "^3.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3"
+  }
+}
