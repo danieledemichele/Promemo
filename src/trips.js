@@ -308,7 +308,7 @@ function tripRoute(t) {
           <div class="tstop-rail"><span class="tstop-dot">${typeEmoji(it.type)}</span></div>
           <div class="tstop-body">
             <div class="tstop-title">${esc(it.title)}</div>
-            <div class="tstop-meta">${it.place?.name ? `<span>${icon('i-pin')} ${esc(it.place.name)}</span>` : ''}${it.type ? `<span>${esc(typeLabel(it.type))}</span>` : ''}${it.anno ? `<span>🏛️ ${esc(it.anno)}</span>` : ''}${it.cost ? `<span>${esc(money(it.cost, t.currency || '€'))}</span>` : ''}${it.booked ? '<span class="ok">Prenotato</span>' : ''}${it.status ? `<span class="st">${esc(stLabel(it.status))}</span>` : ''}</div>
+            <div class="tstop-meta">${it.place?.name ? (hasXY(it) ? `<button class="tplace" data-action="trip-onmap" data-id="${it.id}" title="Vedi sulla mappa">${icon('i-pin')} ${esc(it.place.name)}</button>` : `<span>${icon('i-pin')} ${esc(it.place.name)}</span>`) : ''}${it.type ? `<span>${esc(typeLabel(it.type))}</span>` : ''}${it.anno ? `<span>🏛️ ${esc(it.anno)}</span>` : ''}${it.cost ? `<span>${esc(money(it.cost, t.currency || '€'))}</span>` : ''}${it.booked ? '<span class="ok">Prenotato</span>' : ''}${it.status ? `<span class="st">${esc(stLabel(it.status))}</span>` : ''}</div>
             ${story ? `<div class="tstory"><p class="clamp">${esc(story)}</p>${story.length > 220 ? '<button class="link" data-action="trip-more">Leggi tutto</button>' : ''}${!it.storia ? `<span class="tai" title="Scritto dall'IA">${icon('i-spark')}</span>` : ''}</div>` : ''}
             ${it.notes ? `<div class="tnote">${icon('i-note')} ${esc(it.notes)}</div>` : ''}
             ${it.cercare ? `<div class="tnote">🔎 Da cercare: ${esc(it.cercare)}</div>` : ''}
@@ -330,51 +330,96 @@ function tripTable(t) {
   </tbody></table>`;
 }
 
+// ---------- mappa vera (Leaflet + mappe CARTO/OpenStreetMap) ----------
+let tmap = null, tmapTiles = null;
+const tmapDays = (t) => [...new Set(t.items.map(dayOf))];
+const tmapColor = (t, it) => DAY_COLORS[Math.max(0, tmapDays(t).indexOf(dayOf(it))) % DAY_COLORS.length];
+const gmaps = (it) => `https://www.google.com/maps/search/?api=1&query=${it.place.lat},${it.place.lon}`;
 function tripMap(t) {
-  const days = [...new Set(t.items.map(dayOf))];
-  const colorOf = (it) => DAY_COLORS[Math.max(0, days.indexOf(dayOf(it))) % DAY_COLORS.length];
+  const days = tmapDays(t);
   const fd = ui.tripMapDay && days.includes(ui.tripMapDay) ? ui.tripMapDay : null;
-  const pts = t.items.map((it, i) => ({ it, i })).filter(p => hasXY(p.it) && (!fd || dayOf(p.it) === fd));
+  const pts = t.items.filter(it => hasXY(it) && (!fd || dayOf(it) === fd));
   const dayChips = `<div class="tdays tmap-days"><button class="tday-chip ${fd ? '' : 'on'}" data-action="trip-mapday" data-d="">Tutti i giorni</button>${days.filter(Boolean).map((d, i) => `<button class="tday-chip ${fd === d ? 'on' : ''}" data-action="trip-mapday" data-d="${d}"><i style="background:${DAY_COLORS[i % DAY_COLORS.length]}"></i>G${i + 1} · ${esc(parse(d).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric' }))}</button>`).join('')}</div>`;
-  if (!pts.length) return dayChips + `<div class="empty"><b>Nessuna tappa con coordinate</b>Usa una colonna “Luogo” di tipo posizione in Notion per vedere la mappa.</div>`;
-  const W = 760, H = 480, P = 44;
-  // i luoghi molto lontani (aeroporti, gite fuori città) non schiacciano la mappa: restano sul bordo
-  const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
-  const c = { lat: med(pts.map(p => p.it.place.lat)), lon: med(pts.map(p => p.it.place.lon)) };
-  const dist = pts.map(p => haversine(c, p.it.place));
-  const lim = pts.length >= 4 ? Math.max(6, 4 * med(dist)) : Infinity;
-  pts.forEach((p, k) => { p.far = dist[k] > lim; p.km = dist[k]; });
-  const core = pts.filter(p => !p.far);
-  const lats = core.map(p => p.it.place.lat), lons = core.map(p => p.it.place.lon);
-  const mid = (Math.min(...lats) + Math.max(...lats)) / 2, k = Math.cos(mid * Math.PI / 180);
-  const xs = lons.map(l => l * k), minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...lats), maxY = Math.max(...lats);
-  const sc = Math.min((W - 2 * P) / Math.max(maxX - minX, 0.002), (H - 2 * P) / Math.max(maxY - minY, 0.002));
-  const ox = (W - (maxX - minX) * sc) / 2, oy = (H - (maxY - minY) * sc) / 2;
-  const raw = (pl) => [ox + (pl.lon * k - minX) * sc, oy + (maxY - pl.lat) * sc];
-  const cx = W / 2, cy = H / 2, E = 22;
-  const xy = (pl) => { let [x, y] = raw(pl); if (x >= E && x <= W - E && y >= E && y <= H - E) return [x, y]; const dx = x - cx, dy = y - cy; const f = Math.min(Math.abs((W / 2 - E) / (dx || 1e-9)), Math.abs((H / 2 - E) / (dy || 1e-9))); return [cx + dx * f, cy + dy * f]; };
-  const kmPerPx = 111.32 / sc;
-  const ref = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500].find(v => v / kmPerPx > 60) || 1000;
-  const lines = days.map(d => { const ps = pts.filter(p => dayOf(p.it) === d); return ps.length > 1 ? `<polyline points="${ps.map(p => xy(p.it.place).map(v => v.toFixed(1)).join(',')).join(' ')}" stroke="${colorOf(ps[0].it)}" />` : ''; }).join('');
-  const focus = pts.find(p => p.it.id === ui.tripFocus)?.it || pts[0].it;
-  const fx = (t.ai && t.ai.tappe || {})[focus.id] || {};
-  const label = (p) => { const [x, y] = xy(p.it.place); const right = x < W - 170; return `<text class="tlbl" x="${(x + (right ? 15 : -15)).toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="${right ? 'start' : 'end'}">${esc((p.it.place.name || p.it.title).slice(0, 28))}${p.far ? ` · ${Math.round(p.km)} km` : ''}</text>`; };
-  const far = pts.filter(p => p.far);
+  if (!pts.length) return dayChips + `<div class="empty"><b>Nessuna tappa con coordinate</b>Usa in Notion una colonna “Luogo” di tipo posizione per vedere le tappe sulla mappa.</div>`;
   return `${dayChips}<div class="tmap">
-    <svg viewBox="0 0 ${W} ${H}" class="tmap-svg" role="img" aria-label="Mappa delle tappe">
-      <defs><pattern id="tgrid" width="38" height="38" patternUnits="userSpaceOnUse"><path d="M38 0H0V38" class="tgrid"/></pattern></defs>
-      <rect width="${W}" height="${H}" fill="url(#tgrid)"/>
-      <g class="troutes">${lines}</g>
-      <g class="tlbls">${(fd || pts.length <= 8 ? pts : [...far, ...pts.filter(p => p.it.id === focus.id)]).map(label).join('')}</g>
-      ${pts.map(p => { const [x, y] = xy(p.it.place); const on = p.it.id === focus.id; return `<g class="tpt ${on ? 'on' : ''} ${p.far ? 'far' : ''}" data-action="trip-pick" data-id="${p.it.id}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"><title>${esc(p.i + 1 + '. ' + p.it.title + (p.it.place.name ? ' — ' + p.it.place.name : ''))}</title><circle r="${on ? 13 : 10}" fill="${colorOf(p.it)}"/><text dy="3.6">${p.i + 1}</text></g>`; }).join('')}
-      <g class="tscale" transform="translate(${P - 20} ${H - 20})"><line x1="0" x2="${(ref / kmPerPx).toFixed(1)}" y1="0" y2="0"/><text x="0" y="-7" text-anchor="start">${ref < 1 ? ref * 1000 + ' m' : ref + ' km'}</text></g>
-    </svg>
-    ${far.length ? `<div class="tmap-far">Sul bordo, fuori scala: ${far.map(p => `${p.i + 1}. ${esc(p.it.place.name || p.it.title)} (${Math.round(p.km)} km)`).join(' · ')}</div>` : ''}
-    <div class="card tmap-card" style="--dc:${colorOf(focus)}">
-      <div class="row" style="gap:10px"><span class="tstop-dot">${typeEmoji(focus.type)}</span><div class="grow"><div class="tstop-title">${t.items.indexOf(focus) + 1}. ${esc(focus.title)}</div><div class="tstop-meta">${focus.start ? `<span>${esc(relDay(parse(focus.start)))}${focus.allDay ? '' : ' · ' + fmtHM(parse(focus.start))}</span>` : ''}${focus.place?.name ? `<span>${icon('i-pin')} ${esc(focus.place.name)}</span>` : ''}</div></div><button class="btn small" data-action="trip-focus" data-id="${focus.id}">Nel percorso</button></div>
-      ${focus.storia || fx.storia ? `<p class="tmap-story">${esc(focus.storia || fx.storia)}</p>` : ''}
+    <div class="tmap-box"><div id="tmap-leaflet" class="tmap-leaflet"></div>
+      <div class="tmap-tools"><button class="tmap-btn" data-action="trip-mapfit" title="Inquadra le tappe">${icon('i-route')}</button><button class="tmap-btn" data-action="trip-mapall" title="Mostra anche i luoghi lontani">${icon('i-map')}</button></div>
+      <div class="tmap-off" hidden>Sei offline: le tappe restano sulla mappa, lo sfondo tornerà con la connessione.</div>
     </div>
+    <div class="card tmap-card" id="tmap-card"></div>
   </div>`;
+}
+function tmapCard(t) {
+  const el = document.getElementById('tmap-card'); if (!el) return;
+  const fd = ui.tripMapDay;
+  const pts = t.items.filter(it => hasXY(it) && (!fd || dayOf(it) === fd));
+  const focus = pts.find(p => p.id === ui.tripFocus) || pts[0]; if (!focus) return;
+  const fx = (t.ai && t.ai.tappe || {})[focus.id] || {};
+  const i = t.items.indexOf(focus), prev = i > 0 ? t.items[i - 1] : null, tr = prev && transfer(prev, focus);
+  el.style.setProperty('--dc', tmapColor(t, focus));
+  el.innerHTML = `<div class="row" style="gap:10px"><span class="tstop-dot">${typeEmoji(focus.type)}</span><div class="grow"><div class="tstop-title">${i + 1}. ${esc(focus.title)}</div><div class="tstop-meta">${focus.start ? `<span>${esc(relDay(parse(focus.start)))}${focus.allDay ? '' : ' · ' + fmtHM(parse(focus.start))}</span>` : ''}${focus.place?.name ? `<span>${icon('i-pin')} ${esc(focus.place.name)}</span>` : ''}${tr ? `<span>${tr.icon} ${esc(tr.text)}</span>` : ''}</div></div>
+      <button class="btn small" data-action="trip-map-step" data-d="-1" title="Tappa precedente">${icon('i-chev-l')}</button><button class="btn small" data-action="trip-map-step" data-d="1" title="Tappa successiva">${icon('i-chev-r')}</button>
+      <button class="btn small" data-action="open-url" data-url="${esc(gmaps(focus))}">Indicazioni</button><button class="btn small" data-action="trip-focus" data-id="${focus.id}">Nel percorso</button></div>
+    ${focus.storia || fx.storia ? `<p class="tmap-story">${esc(focus.storia || fx.storia)}</p>` : ''}`;
+}
+function tmapPick(t, id, pan) {
+  ui.tripFocus = id;
+  if (tmap) {
+    tmap._pm.markers.forEach((m, mid) => m.getElement()?.classList.toggle('on', mid === id));
+    const m = tmap._pm.markers.get(id); if (m && pan) tmap.panTo(m.getLatLng(), { animate: true });
+  }
+  tmapCard(t);
+}
+function tmapFit(t, all) {
+  if (!tmap) return;
+  const pts = tmap._pm.pts; if (!pts.length) return;
+  let use = pts;
+  if (!all && pts.length >= 4) { // aeroporti e gite fuori città non rimpiccioliscono la vista
+    const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+    const c = { lat: med(pts.map(p => p.place.lat)), lon: med(pts.map(p => p.place.lon)) };
+    const d = pts.map(p => haversine(c, p.place)), lim = Math.max(6, 4 * med(d));
+    use = pts.filter((p, i) => d[i] <= lim);
+  }
+  if (use.length === 1) tmap.setView([use[0].place.lat, use[0].place.lon], 15);
+  else tmap.fitBounds(use.map(p => [p.place.lat, p.place.lon]), { padding: [40, 40], maxZoom: 16 });
+}
+async function tmapInit(t) {
+  const box = document.getElementById('tmap-leaflet');
+  if (tmap) { tmap.remove(); tmap = null; }
+  if (!box || typeof L === 'undefined') return;
+  if (!tmapTiles) tmapTiles = await api.mapTiles();
+  if (!document.body.contains(box)) return;
+  const fd = ui.tripMapDay;
+  const pts = t.items.filter(it => hasXY(it) && (!fd || dayOf(it) === fd));
+  const dark = document.documentElement.dataset.theme === 'dark' || (document.documentElement.dataset.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+  tmap = L.map(box, { zoomControl: false, attributionControl: true, worldCopyJump: true });
+  L.control.zoom({ position: 'bottomright' }).addTo(tmap);
+  tmap.attributionControl.setPrefix(false);
+  let errs = 0;
+  L.tileLayer(dark ? tmapTiles.dark : tmapTiles.light, { subdomains: 'abcd', maxZoom: 19, attribution: tmapTiles.attribution, detectRetina: true })
+    .on('tileerror', () => { if (++errs === 3) { const o = document.querySelector('.tmap-off'); if (o) o.hidden = false; } })
+    .on('tileload', () => { errs = 0; const o = document.querySelector('.tmap-off'); if (o) o.hidden = true; })
+    .addTo(tmap);
+  const markers = new Map();
+  tmapDays(t).forEach(d => {
+    const ps = pts.filter(p => dayOf(p) === d);
+    if (ps.length > 1) L.polyline(ps.map(p => [p.place.lat, p.place.lon]), { color: tmapColor(t, ps[0]), weight: 4, opacity: .7, lineJoin: 'round' }).addTo(tmap);
+  });
+  pts.forEach(it => {
+    const n = t.items.indexOf(it) + 1;
+    const ic = L.divIcon({ className: 'tmk-wrap', html: `<div class="tmk" style="--dc:${tmapColor(t, it)}"><b>${n}</b><span>${esc(typeEmoji(it.type))}</span></div>`, iconSize: [34, 34], iconAnchor: [17, 17] });
+    const m = L.marker([it.place.lat, it.place.lon], { icon: ic, title: `${n}. ${it.title}`, riseOnHover: true }).addTo(tmap);
+    m.bindTooltip(`<b>${esc(it.title)}</b>${it.start && !it.allDay ? '<br>' + fmtHM(parse(it.start)) + (it.place.name ? ' · ' + esc(it.place.name) : '') : it.place.name ? '<br>' + esc(it.place.name) : ''}`, { direction: 'top', offset: [0, -16], className: 'tmk-tip' });
+    m.on('click', () => tmapPick(t, it.id, false));
+    markers.set(it.id, m);
+  });
+  tmap._pm = { markers, pts };
+  const v = ui.tripMapView;
+  if (v && v.trip === t.id && v.day === (fd || '')) tmap.setView(v.center, v.zoom, { animate: false }); else tmapFit(t);
+  tmap.on('moveend', () => { ui.tripMapView = { trip: t.id, day: fd || '', center: tmap.getCenter(), zoom: tmap.getZoom() }; });
+  const f = pts.find(p => p.id === ui.tripFocus) || pts[0];
+  tmapPick(t, f.id, !!(ui.tripFocus && !(v && v.trip === t.id)));
+  setTimeout(() => tmap && tmap.invalidateSize(), 60);
 }
 
 // ---------- azioni ----------
@@ -388,8 +433,11 @@ Object.assign(actions, {
   'trip-mode': (el) => { ui.tripMode = el.dataset.m; render(); },
   'trip-day': (el) => { const d = document.getElementById('tday-' + el.dataset.d); d && d.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
   'trip-more': (el) => { const p = el.parentElement.querySelector('p'); const open = p.classList.toggle('clamp'); el.textContent = open ? 'Leggi tutto' : 'Mostra meno'; },
-  'trip-mapday': (el) => { ui.tripMapDay = el.dataset.d || null; ui.tripFocus = null; render(); },
-  'trip-pick': (el) => { ui.tripFocus = el.dataset.id; render(); },
+  'trip-mapday': (el) => { ui.tripMapDay = el.dataset.d || null; ui.tripFocus = null; ui.tripMapView = null; render(); },
+  'trip-mapfit': () => tmapFit(data.trips[ui.trip]),
+  'trip-mapall': () => tmapFit(data.trips[ui.trip], true),
+  'trip-map-step': (el) => { const t = data.trips[ui.trip]; if (!tmap) return; const pts = tmap._pm.pts; const i = pts.findIndex(p => p.id === ui.tripFocus); const n = pts[(i + Number(el.dataset.d) + pts.length) % pts.length]; tmapPick(t, n.id, true); },
+  'trip-onmap': (el) => { ui.tripMode = 'mappa'; ui.tripFocus = el.dataset.id; ui.tripMapView = null; const it = data.trips[ui.trip].items.find(i => i.id === el.dataset.id); if (ui.tripMapDay && it && dayOf(it) !== ui.tripMapDay) ui.tripMapDay = null; render(); },
   'trip-focus': (el) => { ui.tripFocus = el.dataset.id; ui.tripMode = 'percorso'; ui.tripScrollTo = el.dataset.id; render(); },
 });
 // gli eventi dell'agenda che arrivano da un viaggio aprono l'itinerario
@@ -443,10 +491,13 @@ EXTRA_VIEWS.viaggi = {
   render: viewTrips,
   full: () => !!(ui.trip && data.trips && data.trips[ui.trip] && tripsCfg().destDb),
   after: (v) => {
+    const t = ui.trip && data.trips && data.trips[ui.trip];
+    if (t && (ui.tripMode === 'mappa')) tmapInit(t); else if (tmap) { tmap.remove(); tmap = null; }
     if (ui.tripScrollTo) {
       const el = document.getElementById('tstop-' + ui.tripScrollTo); ui.tripScrollTo = null;
       el && requestAnimationFrame(() => el.scrollIntoView({ block: 'center' }));
     }
   },
 };
+document.addEventListener('click', (e) => { const a = e.target.closest('.leaflet-container a[href^="http"]'); if (a) { e.preventDefault(); api.openUrl(a.href); } });
 if (data) render();

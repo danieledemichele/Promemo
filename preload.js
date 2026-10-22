@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('promemo', {
   ndbUpdate: (a) => ipcRenderer.invoke('ndb:update', a),
   ndbCreate: (a) => ipcRenderer.invoke('ndb:create', a),
   ndbArchive: (a) => ipcRenderer.invoke('ndb:archive', a),
+  mapTiles: () => ipcRenderer.invoke('map:tiles'),
   tripSync: () => ipcRenderer.invoke('trip:sync'),
   tripChildren: (a) => ipcRenderer.invoke('trip:children', a),
   tripAgenda: () => ipcRenderer.invoke('trip:agenda'),

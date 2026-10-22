@@ -909,21 +909,28 @@ function modalGoogle() {
     </form>`);
 }
 
-function modalNotion() {
+function modalNotion(pre = {}) {
+  const known = (data.accounts || []).filter(a => a.provider === 'notion');
   openModal(`
-    <h2>${provIcon({ provider: 'notion' })} Collega un database Notion</h2>
-    <ol class="howto">
+    <h2>${provIcon({ provider: 'notion' })} ${pre.database ? 'Mostra in Agenda' : 'Collega un database Notion'}</h2>
+    ${known.length ? `<p class="muted" style="margin-top:-6px">Puoi collegare tutti i database che vuoi (lezioni, allenamenti, scadenze…): ognuno diventa un calendario con i suoi colori. Il token dell'integrazione già salvato si riusa.</p>` : ''}
+    <ol class="howto" ${known.length ? 'style="display:none"' : ''}>
       <li>Su <a href="#" data-action="open-url" data-url="https://www.notion.so/profile/integrations">notion.so/profile/integrations</a> crea una <b>integrazione interna</b> e copia il <b>token</b>.</li>
       <li>Apri il database in Notion → menu <b>⋯</b> → <b>Connessioni</b> → aggiungi la tua integrazione.</li>
       <li>Copia il link del database (<i>Condividi → Copia link</i>) e incollalo qui.</li>
     </ol>
     <form class="form" data-submit="inspect-notion">
-      <label class="field"><span>Token dell'integrazione</span><input name="token" type="password" required placeholder="ntn_…" spellcheck="false"></label>
-      <label class="field"><span>Link o ID del database</span><input name="database" required placeholder="https://www.notion.so/…" spellcheck="false"></label>
+      ${known.length ? `<label class="field"><span>Integrazione</span><select name="fromAcc" data-notion-from><option value="${known[0].id}">Usa il token già salvato (${esc(known[0].name)})</option><option value="">Un altro token…</option></select></label>` : ''}
+      <label class="field" ${known.length ? 'style="display:none"' : ''} data-token-field><span>Token dell'integrazione</span><input name="token" type="password" ${known.length ? '' : 'required'} placeholder="ntn_…" spellcheck="false"></label>
+      <label class="field"><span>Link o ID del database</span><input name="database" required placeholder="https://www.notion.so/…" spellcheck="false" value="${esc(pre.database || '')}"></label>
       <div class="notion-map" hidden></div>
       <div class="form-err" hidden></div>
       <div class="modal-actions"><button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">Verifica database</button></div>
-    </form>`);
+    </form>`, (m) => {
+      const sel = m.querySelector('[data-notion-from]');
+      sel && sel.addEventListener('change', () => { const f = m.querySelector('[data-token-field]'); f.style.display = sel.value ? 'none' : ''; m.querySelector('.howto').style.display = sel.value ? 'none' : ''; f.querySelector('input').required = !sel.value; });
+      if (pre.database && known.length) setTimeout(() => m.querySelector('form').requestSubmit(), 50);
+    });
 }
 
 function modalCalendly() {
@@ -1762,13 +1769,13 @@ const submits = {
     const map = f.querySelector('.notion-map');
     if (!map.hidden) { // secondo passaggio: collega
       setBusy(f, true, 'Collegamento…');
-      const r = await api.notion({ token: fd.get('token').trim(), databaseId: f.dataset.db, title: f.dataset.title, titleProp: fd.get('titleProp'), dateProp: fd.get('dateProp'), locProp: fd.get('locProp'), notesProp: fd.get('notesProp'), colorProp: fd.get('colorProp') });
+      const r = await api.notion({ token: (fd.get('token') || '').trim(), fromAcc: fd.get('fromAcc') || '', databaseId: f.dataset.db, title: f.dataset.title, titleProp: fd.get('titleProp'), dateProp: fd.get('dateProp'), locProp: fd.get('locProp'), notesProp: fd.get('notesProp'), colorProp: fd.get('colorProp') });
       setBusy(f, false);
       if (!r.ok) return showErr(f, r.error);
-      closeModal(); go('account'); toast('Notion collegato'); return;
+      closeModal(); if (ui.view !== 'notion') go('account'); else render(); toast(`“${f.dataset.title}” ora è in Agenda`); return;
     }
     setBusy(f, true, 'Verifica…');
-    const r = await api.notionInspect({ token: fd.get('token').trim(), database: fd.get('database').trim() });
+    const r = await api.notionInspect({ token: (fd.get('token') || '').trim(), fromAcc: fd.get('fromAcc') || '', database: fd.get('database').trim() });
     setBusy(f, false);
     if (!r.ok) return showErr(f, r.error);
     const { id, title, props } = r.value;
@@ -1790,6 +1797,7 @@ const submits = {
       </div>
       <label class="field"><span>Colori da (Seleziona / Stato)</span><select name="colorProp">${opt(of(['select', 'multi_select', 'status']), 'Nessuna, un solo colore')}</select></label>`;
     f.querySelectorAll('[name=token],[name=database]').forEach(i => i.readOnly = true);
+    f.querySelector('[name=fromAcc]') && (f.querySelector('[name=fromAcc]').disabled = false, f.querySelector('[name=fromAcc]').style.pointerEvents = 'none');
     f.querySelector('.btn-primary').textContent = 'Collega database';
   },
   'connect-calendly': async (f, fd) => {

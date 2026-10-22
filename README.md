@@ -36,14 +36,16 @@ Promemo legge da Notion i dati essenziali di ogni viaggio e l'intelligenza artif
 
 - **Da Notion**: si sceglie il database delle destinazioni (es. *Destinations* del Travel Planner). Le colonne vengono riconosciute da sole: nome, stato (*Visited / In Planning / Want to go*), date, notti, mezzi di trasporto, compagni di viaggio, budget, preferito. L'**itinerario** è il database annidato nella pagina del viaggio, trovato anche dentro colonne e toggle: per ogni tappa attività, data e ora, **luogo** (colonna di tipo posizione, con coordinate), tipo, stato, prenotato, costo stimato, note, *Storia*, *Da cercare*, *Anno storico*.
 - **Dall'IA** (*Scrivi con l'IA* nella pagina del viaggio): il racconto del viaggio, un titolo e una sintesi per ogni giorno, la storia e le curiosità di ogni luogo, come spostarsi da una tappa all'altra e qualche consiglio pratico. Se in Notion la colonna *Storia* è già compilata, vince quella. Per un viaggio già fatto i testi sono scritti come un ricordo. I testi restano salvati sul computer e si possono riscrivere.
-- **Percorso**: linea del tempo per giorno con orari, tipo di tappa e distanza e tempo a piedi o con i mezzi tra una tappa e l'altra (calcolati dalle coordinate). **Elenco**: tabella compatta. **Mappa**: tappe numerate e collegate per giorno, filtro per giorno; aeroporti e gite fuori città restano sul bordo per non schiacciare il centro.
+- **Percorso**: linea del tempo per giorno con orari, tipo di tappa e distanza e tempo a piedi o con i mezzi tra una tappa e l'altra (calcolati dalle coordinate). **Elenco**: tabella compatta. **Mappa**: una mappa vera (strade e quartieri da OpenStreetMap, stile chiaro o scuro con il tema) con le tappe numerate e collegate per giorno; zoom, trascinamento, filtro per giorno, frecce per passare da una tappa all'altra, *Indicazioni* che apre il navigatore. All'apertura inquadra il centro senza farsi rimpicciolire da aeroporti e gite fuori città (un pulsante mostra anche quelli). Nel Percorso un clic sul luogo di una tappa la apre sulla mappa. Serve la connessione per lo sfondo; le tappe restano visibili anche offline.
 - **In Agenda**: il viaggio compare come evento di più giorni e ogni tappa con orario come appuntamento nel gruppo *Viaggi da Notion* (colore e visibilità dalla barra laterale). Un clic su una tappa apre l'itinerario in quel punto.
 - I viaggi si aggiornano con la sincronizzazione periodica o con *Aggiorna da Notion*.
 
 ## Database Notion
 ![Database Notion](docs/database-notion.png)
 
-Tutti i database condivisi con l'integrazione, in tabella: titolo, testo, numeri, selezione, stato, selezione multipla, caselle, date, link, email e telefono si modificano direttamente e la modifica va subito su Notion. Ordinamento per colonna, filtro, nuove righe, archiviazione (doppio clic sul cestino) e collegamento alla pagina in Notion. Le altre colonne (posizione, relazioni, formule, rollup, persone, file) sono in sola lettura.
+Tutti i database condivisi con l'integrazione (lezioni, allenamenti, scadenze, letture…), in tabella: titolo, testo, numeri, selezione, stato, selezione multipla, caselle, date, link, email e telefono si modificano direttamente e la modifica va subito su Notion. Ordinamento per colonna, filtro, nuove righe, archiviazione (doppio clic sul cestino) e collegamento alla pagina in Notion. Le altre colonne (posizione, relazioni, formule, rollup, persone, file) sono in sola lettura.
+
+Ogni database con una colonna data può comparire anche in **Agenda** con *Mostra in Agenda*: diventa un calendario sincronizzato in entrambe le direzioni, con i colori presi da una colonna Seleziona o Stato (es. la classe o il tipo di allenamento). Il token dell'integrazione già salvato si riusa, quindi basta scegliere il database.
 
 ## Meteo
 Icona in alto a destra con la temperatura attuale; un clic apre condizioni, umidità, vento, alba e tramonto, le prossime 24 ore e i 7 giorni. Nella Home c'è un riquadro con la situazione di oggi e nelle viste Giorno/Settimana ogni giorno mostra icona e massima. La località si cambia in *Impostazioni → Meteo* (predefinita: Cagliari). Dati di [Open-Meteo](https://open-meteo.com), gratuiti e senza account.
@@ -130,8 +132,8 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.9.0.AppImage e dist/promemo_1.9.0_amd64.deb
-sudo apt install ./dist/promemo_1.9.0_amd64.deb
+npm run dist        # dist/Promemo-1.9.1.AppImage e dist/promemo_1.9.1_amd64.deb
+sudo apt install ./dist/promemo_1.9.1_amd64.deb
 ```
 
 ## Scorciatoie
@@ -151,7 +153,7 @@ notiondb.js    database Notion: elenco, schema, righe, modifica; itinerari annid
 sync.js        Google Calendar (OAuth PKCE), Notion API, feed .ics; unione e invio modifiche
 ics.js         parser iCalendar con fusi orari e ricorrenze
 preload.js     ponte sicuro verso l'interfaccia
-src/           interfaccia (HTML, CSS, JS senza framework)
+src/           interfaccia (HTML, CSS, JS senza framework; Leaflet in src/vendor per le mappe)
 ```
 
 ## Licenza

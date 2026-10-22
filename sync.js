@@ -192,7 +192,8 @@ function createSync(ctx) {
   };
   const plain = (arr) => (arr || []).map(t => t.plain_text || t.text?.content || '').join('');
 
-  async function notionInspect({ token, database }) {
+  async function notionInspect({ token, database, fromAcc }) {
+    if (!token && fromAcc) token = ctx.secret(fromAcc)?.token;
     const id = notionId(database);
     if (!token) throw new Error('Inserisci il token dell’integrazione.');
     if (!id) throw new Error('Link o ID del database non valido.');
@@ -227,8 +228,12 @@ function createSync(ctx) {
     return acc;
   }
 
-  async function notionConnect({ token, databaseId, title, titleProp, dateProp, locProp, notesProp, colorProp }) {
+  async function notionConnect({ token, fromAcc, databaseId, title, titleProp, dateProp, locProp, notesProp, colorProp }) {
     if (!dateProp) throw new Error('Scegli la proprietà data.');
+    if (!token && fromAcc) token = ctx.secret(fromAcc)?.token;
+    if (!token) throw new Error('Token Notion mancante.');
+    const dup = ctx.data().accounts.find(a => a.provider === 'notion' && a.calendars.some(c => c.id.replace(/-/g, '') === String(databaseId).replace(/-/g, '')));
+    if (dup) throw new Error(`Questo database è già in Agenda come “${dup.name}”.`);
     const id = 'acc-' + uid();
     ctx.setSecret(id, { token });
     const acc = { id, provider: 'notion', name: title, enabled: true, defaultReminder: null,

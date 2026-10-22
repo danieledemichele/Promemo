@@ -252,7 +252,9 @@ function createWindow() {
   win.on('closed', () => { win = null; });
   win.on('maximize', () => win.webContents.send('maximized', true));
   win.on('unmaximize', () => win.webContents.send('maximized', false));
-  win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
+  win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+  // la finestra non lascia mai l'interfaccia: i link esterni si aprono nel browser
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) { e.preventDefault(); if (/^https:\/\//.test(url)) shell.openExternal(url); } });
 }
 
 function createTray() {
@@ -619,6 +621,12 @@ function tripsToAgenda() {
   }
   return n;
 }
+// sfondo delle mappe: CARTO (chiaro/scuro, dati OpenStreetMap); PROMEMO_TILES per i test
+ipcMain.handle('map:tiles', () => {
+  const t = process.env.PROMEMO_TILES;
+  return t ? { light: t, dark: t, attribution: '© OpenStreetMap' }
+    : { light: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>' };
+});
 ipcMain.handle('trip:sync', wrap(() => syncTrips()));
 ipcMain.handle('trip:children', wrap(({ acc, page }) => ndb.childDatabases(acc, page)));
 ipcMain.handle('trip:agenda', wrap(() => { tripsToAgenda(); commit(); return true; }));

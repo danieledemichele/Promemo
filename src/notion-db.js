@@ -143,6 +143,7 @@ function viewNotionDb() {
       <div class="ndb-head">
         <div class="ndb-find grow">${icon('i-search')}<input placeholder="Filtra le righe" value="${esc(ndb.q)}" data-ndb-q></div>
         <button class="btn small" data-action="open-url" data-url="${esc(s.url)}">Apri in Notion</button>
+        ${ndbInAgenda(s) ? `<button class="btn small" data-action="nav" data-view="agenda" title="Già sincronizzato come calendario">${icon('i-check')} In Agenda</button>` : s.props.some(p => p.type === 'date') ? `<button class="btn small" data-action="ndb-agenda" title="Le righe con una data diventano eventi">${icon('i-calendar')} Mostra in Agenda</button>` : ''}
         <button class="btn-primary" data-action="ndb-new">${icon('i-plus')} Nuova riga</button>
       </div>` : ''}
       ${ndb.err ? `<div class="form-err" style="margin:10px 0">${esc(ndb.err)}</div>` : ''}
@@ -173,7 +174,9 @@ function ndbMultiMenu(el) {
   });
 }
 
+const ndbInAgenda = (s) => (data.accounts || []).some(a => a.provider === 'notion' && a.calendars.some(c => c.id.replace(/-/g, '') === s.id.replace(/-/g, '')));
 Object.assign(actions, {
+  'ndb-agenda': () => modalNotion({ database: ndb.schema.id }),
   'ndb-open': (el) => ndbOpen(el.dataset.id),
   'ndb-reload': () => { ndb.accs = null; ndb.dbs = null; render(); },
   'ndb-more': () => ndbQuery(true),
