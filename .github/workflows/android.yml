@@ -11,26 +11,26 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
-      - uses: actions/setup-java@v4
+          node-version: 22
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
       - name: Web e Capacitor
         working-directory: mobile-app
         run: |
-          npm ci
-          npm run build
-          npx cap sync android
+          set -o pipefail
+          (npm ci && npm run build && npx cap sync android) 2>&1 | tee ../web.log || { echo "::error::$(tail -c 2500 ../web.log | tr '\n' ' ')"; exit 1; }
       - name: APK
         working-directory: mobile-app/android
         run: |
+          set -o pipefail
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease
-      - uses: actions/upload-artifact@v4
+          ./gradlew --no-daemon assembleRelease 2>&1 | tee ../../gradle.log || { echo "::error::$(grep -iE 'error|what went wrong|failed' -A4 ../../gradle.log | tail -c 3500 | tr '\n' ' ')"; exit 1; }
+      - uses: actions/upload-artifact@v5
         with:
           name: promemo-apk
           path: mobile-app/android/app/build/outputs/apk/release/*.apk
