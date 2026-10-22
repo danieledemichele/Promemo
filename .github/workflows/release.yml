@@ -103,7 +103,8 @@ jobs:
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease 2>&1 | tee ../../gradle.log || { echo "::error::$(grep -iE 'error|what went wrong|failed' -A4 ../../gradle.log | tail -c 3500 | tr '\n' ' ')"; exit 1; }
           VER="${TAG#v}"
-          cp app/build/outputs/apk/release/app-release.apk "../../Promemo-$VER.apk"
+          # senza la chiave nei segreti l'APK è firmato con una chiave temporanea: lo segnalo nel nome
+          if [ -f app/promemo.jks ]; then cp app/build/outputs/apk/release/app-release.apk "../../Promemo-$VER.apk"; else cp app/build/outputs/apk/release/app-release.apk "../../Promemo-$VER-provvisoria.apk"; fi
       - name: Allega alla release
         if: steps.has.outputs.yes == '1'
         env:

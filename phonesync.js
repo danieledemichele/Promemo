@@ -14,7 +14,10 @@ async function keyFor(pass, salt) {
 }
 // PMSY1 | sale (16 byte) | contenuto cifrato (come la cassaforte: PMV1 | iv | tag | dati)
 async function seal(obj, pass, salt) { return Buffer.concat([MAGIC, salt, vault.seal(await keyFor(pass, salt), JSON.stringify(obj))]); }
+// il file è scritto in base64 (testo): passa intatto da qualsiasi client HTTP del telefono
+const toText = (buf) => Buffer.from(buf.toString('base64'));
 async function open(buf, pass) {
+  if (buf && !buf.subarray(0, 5).equals(MAGIC)) buf = Buffer.from(buf.toString('utf8').trim(), 'base64');
   if (!buf || !buf.subarray(0, 5).equals(MAGIC)) throw new Error('File di sincronizzazione non riconosciuto');
   const salt = buf.subarray(5, 21);
   let plain; try { plain = vault.open(await keyFor(pass, salt), buf.subarray(21)); } catch { throw new Error('Password della sincronizzazione errata'); }
@@ -84,7 +87,7 @@ function createPhoneSync(ctx) {
       set({ seen });
       // 2. scrivo il mio stato (con ciò che ho appena unito)
       const salt = Buffer.from(ctx.data().settings.phoneSync.salt, 'base64');
-      await target.put(`promemo-sync-${me}${EXT}`, await seal(state(), pass, salt));
+      await target.put(`promemo-sync-${me}${EXT}`, toText(await seal(state(), pass, salt)));
       set({ lastCloudAt: new Date().toISOString(), lastError: '' });
       ctx.commit();
       return total;

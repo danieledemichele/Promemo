@@ -60,10 +60,12 @@ async function sealState(obj, pass, salt) {
   const ct = ctTag.subarray(0, ctTag.length - 16), tag = ctTag.subarray(ctTag.length - 16);
   const out = new Uint8Array(5 + 16 + 4 + 12 + 16 + ct.length);
   let o = 0; for (const part of [MAGIC_SY, salt, MAGIC_V, iv, tag, ct]) { out.set(part, o); o += part.length; }
-  return out;
+  let bin = ''; for (let i = 0; i < out.length; i += 0x8000) bin += String.fromCharCode.apply(null, out.subarray(i, i + 0x8000));
+  return btoa(bin); // testo base64: passa intatto dal client HTTP nativo
 }
 async function openState(buf, pass) {
-  buf = new Uint8Array(buf);
+  if (typeof buf === 'string') buf = b64.from(buf.trim()); else buf = new Uint8Array(buf);
+  if (dec.decode(buf.subarray(0, 5)) !== 'PMSY1') { try { buf = b64.from(dec.decode(buf).trim()); } catch { /* */ } }
   if (dec.decode(buf.subarray(0, 5)) !== 'PMSY1') throw new Error('File di sincronizzazione non riconosciuto');
   const salt = buf.subarray(5, 21), body = buf.subarray(21);
   const iv = body.subarray(4, 16), tag = body.subarray(16, 32), ct = body.subarray(32);
@@ -74,9 +76,10 @@ async function openState(buf, pass) {
 
 // ---------- rete con limite di tempo ----------
 async function req(url, opts = {}, ms = 15000) {
-  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms);
-  try { return await fetch(url, { ...opts, signal: ctl.signal }); }
-  catch (e) { throw new Error(e.name === 'AbortError' ? 'tempo scaduto' : 'non raggiungibile'); }
+  const ctl = new AbortController(); let t;
+  const timeout = new Promise((_, rej) => { t = setTimeout(() => { ctl.abort(); rej(new Error('tempo scaduto')); }, ms); });
+  try { return await Promise.race([fetch(url, { ...opts, signal: ctl.signal }), timeout]); }
+  catch (e) { throw new Error(e.message === 'tempo scaduto' || e.name === 'AbortError' ? 'tempo scaduto' : 'non raggiungibile'); }
   finally { clearTimeout(t); }
 }
 
@@ -87,6 +90,8 @@ function cloudDest(c) {
     const H = { authorization: 'Basic ' + btoa(unescape(encodeURIComponent(`${c.user || ''}:${c.password || ''}`))) };
     return {
       async list() {
+        // sul telefono PROPFIND non è sempre disponibile: il nome del file del computer è noto dall'abbinamento
+        if (c.desktopFile) return [{ name: c.desktopFile, tag: null }];
         const r = await req(base, { method: 'PROPFIND', headers: { ...H, depth: '1', 'content-type': 'application/xml' }, body: '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getlastmodified/><d:getcontentlength/></d:prop></d:propfind>' });
         if (r.status === 401) throw new Error('WebDAV: credenziali non valide');
         if (!r.ok && r.status !== 207) throw new Error('WebDAV: elenco non riuscito (' + r.status + ')');
@@ -98,8 +103,8 @@ function cloudDest(c) {
         }
         return out;
       },
-      async get(name) { const r = await req(base + encodeURIComponent(name), { headers: H }, 60000); if (!r.ok) throw new Error('WebDAV: lettura non riuscita'); return new Uint8Array(await r.arrayBuffer()); },
-      async put(name, buf) { const r = await req(base + encodeURIComponent(name), { method: 'PUT', headers: { ...H, 'content-type': 'application/octet-stream' }, body: buf }, 60000); if (!r.ok) throw new Error('WebDAV: scrittura non riuscita (' + r.status + ')'); },
+      async get(name) { const r = await req(base + encodeURIComponent(name), { headers: H }, 60000); if (r.status === 404) return null; if (!r.ok) throw new Error('WebDAV: lettura non riuscita (' + r.status + ')'); return await r.text(); },
+      async put(name, text) { const r = await req(base + encodeURIComponent(name), { method: 'PUT', headers: { ...H, 'content-type': 'text/plain' }, body: text }, 60000); if (!r.ok) throw new Error('WebDAV: scrittura non riuscita (' + r.status + ')'); },
     };
   }
   if (c.type === 'dropbox') {
@@ -113,8 +118,8 @@ function cloudDest(c) {
     const call = async (url, opts) => { const r = await req(url, { ...opts, headers: { authorization: 'Bearer ' + await token(), ...(opts.headers || {}) } }, 60000); return r; };
     return {
       async list() { const r = await call('https://api.dropboxapi.com/2/files/list_folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: '' }) }); if (!r.ok) { if (r.status === 409) return []; throw new Error('Dropbox: elenco non riuscito'); } const j = await r.json(); return (j.entries || []).filter(e => e['.tag'] === 'file' && e.name.endsWith('.pmsync')).map(e => ({ name: e.name, tag: e.rev || e.server_modified })); },
-      async get(name) { const r = await call('https://content.dropboxapi.com/2/files/download', { method: 'POST', headers: { 'dropbox-api-arg': JSON.stringify({ path: '/' + name }) } }); if (!r.ok) throw new Error('Dropbox: lettura non riuscita'); return new Uint8Array(await r.arrayBuffer()); },
-      async put(name, buf) { const r = await call('https://content.dropboxapi.com/2/files/upload', { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'dropbox-api-arg': JSON.stringify({ path: '/' + name, mode: 'overwrite', mute: true }) }, body: buf }); if (!r.ok) throw new Error('Dropbox: scrittura non riuscita (' + r.status + ')'); },
+      async get(name) { const r = await call('https://content.dropboxapi.com/2/files/download', { method: 'POST', headers: { 'dropbox-api-arg': JSON.stringify({ path: '/' + name }) } }); if (r.status === 409) return null; if (!r.ok) throw new Error('Dropbox: lettura non riuscita'); return await r.text(); },
+      async put(name, text) { const r = await call('https://content.dropboxapi.com/2/files/upload', { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'dropbox-api-arg': JSON.stringify({ path: '/' + name, mode: 'overwrite', mute: true }) }, body: text }); if (!r.ok) throw new Error('Dropbox: scrittura non riuscita (' + r.status + ')'); },
     };
   }
   throw new Error('Questa destinazione non è raggiungibile dal telefono');
@@ -164,11 +169,12 @@ async function syncLan() {
 }
 async function syncCloud() {
   const c = S.cfg.cloud; if (!c || !c.pass) return null;
-  const dst = cloudDest(c);
+  const dst = cloudDest({ ...c, desktopFile: S.cfg.desktop ? `promemo-sync-${S.cfg.desktop}.pmsync` : null });
   const files = await dst.list(); const seen = S.cfg.seen || {}; let n = 0;
   for (const f of files) {
-    if (f.name === `promemo-sync-${S.cfg.dev}.pmsync` || seen[f.name] === f.tag) continue;
-    const st = await openState(await dst.get(f.name), c.pass);
+    if (f.name === `promemo-sync-${S.cfg.dev}.pmsync` || (f.tag && seen[f.name] === f.tag)) continue;
+    const raw = await dst.get(f.name); if (raw == null) continue;
+    const st = await openState(raw, c.pass);
     if (st.dev !== S.cfg.dev) { n += PromemoSync.merge(S.data, st); if (st.ext && (!S.data.ext || st.ext.at > S.data.ext.at)) S.data.ext = st.ext; }
     seen[f.name] = f.tag;
   }

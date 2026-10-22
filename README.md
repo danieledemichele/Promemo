@@ -65,6 +65,34 @@ Ore in agenda per giorno e per calendario, concentrazione per attività, compiti
 - **Widget sul desktop**: prossimo impegno con conto alla rovescia, “esci alle”, la giornata e un campo per aggiungere; sempre in primo piano, si sposta trascinandolo (anche dal menu dell'icona nell'area di notifica).
 - **Telefono**: Promemo serve un'app web nella rete di casa. In *Impostazioni → Telefono* si attiva e si inquadra il codice QR; poi *Aggiungi a schermata Home*. Agenda di oggi e della settimana, compiti da spuntare, progetti, viaggi e aggiunta con una frase. Fuori casa funziona attraverso una VPN (es. WireGuard). L'accesso richiede la chiave del QR; il collegamento è HTTP, quindi va usato solo in rete locale o in VPN.
 
+## App Android e sincronizzazione
+| Oggi | Modifica |
+|---|---|
+| ![Android](docs/android-oggi.png) | ![Scheda](docs/android-scheda.png) |
+
+L'app per Android (file `Promemo-x.y.z.apk` tra gli allegati di ogni release) ha i dati sul telefono e funziona anche senza rete: **Oggi**, **Agenda** con i giorni a scorrimento, **Compiti** (in ritardo, oggi, prossimi), **Progetti** e **Viaggi**, modifica di eventi e compiti, ripetizioni, aggiunta con una frase e notifiche per i promemoria e per “esci alle” anche ad app chiusa.
+
+La sincronizzazione è **bidirezionale**: ogni evento, compito, progetto e raccolta ha una data di modifica e le cancellazioni vengono annotate, così le modifiche fatte offline sui due dispositivi si uniscono (per lo stesso elemento vince la più recente). Gli eventi dei calendari collegati e i viaggi arrivano dal computer in sola lettura.
+
+- **In rete** (o in VPN): il telefono parla direttamente con il computer, subito.
+- **Fuori casa**: attraverso la stessa destinazione dei backup (Dropbox o WebDAV/Nextcloud), con file cifrati con la password dei backup (scrypt + AES-256-GCM). Il computer sincronizza all'avvio, dopo ogni modifica e periodicamente; il telefono all'apertura, dopo ogni modifica e ogni 2 minuti mentre è aperto.
+- **Abbinamento**: *Impostazioni → Telefono*, attiva “Sincronizza con l'app Android” e inquadra il codice “App Android”; il telefono riceve anche l'accesso al cloud per quando è fuori casa.
+- Prima di unire molte modifiche il computer salva una copia locale dei dati.
+
+## Ripetizioni
+Eventi e compiti possono ripetersi ogni giorno, nei giorni feriali, ogni settimana (scegliendo i giorni), ogni 2 settimane, ogni mese o ogni anno, fino a una data. Si impostano nel modulo dell'evento, nella scheda del compito o in una frase (“lezione di Topografia ogni martedì e giovedì alle 8 fino al 18 dicembre”). Una singola occorrenza si può saltare dalla scheda. Completato un compito ripetuto nasce il successivo. Le ripetizioni inviate a Google Calendar restano una sola serie.
+
+## Annulla, cestino e copie
+**Ctrl+Z** annulla l'ultima modifica e **Ctrl+Shift+Z** la ripete. Ciò che elimini resta nel **cestino** per 30 giorni (*Impostazioni → Cestino e copie*). Ogni giorno Promemo salva una **copia locale** dei dati (le ultime 14, cifrate se la password è attiva) e una prima di ogni ripristino o grande sincronizzazione.
+
+## Registro degli errori
+![Diagnostica](docs/diagnostica.png)
+
+Errori e malfunzionamenti finiscono in `~/.config/Promemo/logs/promemo.log` (a rotazione, token e password mai scritti): sincronizzazioni non riuscite, servizi irraggiungibili, errori dell'interfaccia e delle finestre. *Impostazioni → Diagnostica* mostra gli ultimi problemi, il registro e permette di **esportare la diagnostica** (versioni, stato degli account senza credenziali, registro). Anche l'app Android ha il suo registro in *Altro*.
+
+## Release automatiche
+Il flusso GitHub Actions *Release* (a un nuovo tag `vX.Y.Z` o a mano indicando il tag) crea la release con le note di `docs/note/vX.Y.Z.md` e allega AppImage, .deb e l'APK Android firmato. Per firmare l'APK sempre con la stessa chiave servono due segreti del repository: `ANDROID_KEYSTORE_B64` e `ANDROID_KEYSTORE_PASS`.
+
 ## Aggiornamenti
 ![Aggiornamento](docs/aggiornamento.png)
 
@@ -73,7 +101,7 @@ Promemo controlla le release pubblicate su GitHub all'avvio e ogni 6 ore. Quando
 - **pacchetto .deb**: *Installa e riavvia* scarica il .deb e lo installa chiedendo la password del sistema;
 - *Più tardi* ferma il lampeggio fino al prossimo avvio, *Salta questa versione* la nasconde.
 
-Il controllo automatico si spegne in *Impostazioni → Aggiornamenti*. Perché funzioni, ogni release su GitHub deve avere un tag di versione (es. `v1.11.0`) e i file `Promemo-x.y.z.AppImage` e `promemo_x.y.z_amd64.deb` allegati; il testo della release diventa la nota mostrata nell'app.
+Il controllo automatico si spegne in *Impostazioni → Aggiornamenti*. Perché funzioni, ogni release su GitHub deve avere un tag di versione (es. `v1.12.0`) e i file `Promemo-x.y.z.AppImage` e `promemo_x.y.z_amd64.deb` allegati; il testo della release diventa la nota mostrata nell'app.
 
 ## Integrazioni
 ![Integrazioni](docs/integrazioni.png)
@@ -185,12 +213,12 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.11.0.AppImage e dist/promemo_1.11.0_amd64.deb
-sudo apt install ./dist/promemo_1.11.0_amd64.deb
+npm run dist        # dist/Promemo-1.12.0.AppImage e dist/promemo_1.12.0_amd64.deb
+sudo apt install ./dist/promemo_1.12.0_amd64.deb
 ```
 
 ## Scorciatoie
-Ctrl+Alt+Spazio aggiunta rapida (da qualsiasi app) · Ctrl+K palette comandi e frasi · Ctrl+J assistente · Ctrl+B barra laterale · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni principali · Esc chiude popup e finestre.
+Ctrl+Z annulla · Ctrl+Shift+Z ripeti · Ctrl+Alt+Spazio aggiunta rapida (da qualsiasi app) · Ctrl+K palette comandi e frasi · Ctrl+J assistente · Ctrl+B barra laterale · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni principali · Esc chiude popup e finestre.
 
 ## Dati
 `~/.config/Promemo/promemo.json` (scrittura atomica). Backup da *Impostazioni → Esporta*.
@@ -205,12 +233,17 @@ vault.js       cifratura locale (scrypt + AES-256-GCM, chiave di recupero)
 quick.js       creazione da una frase (finestra rapida, widget, telefono)
 travel.js      tempo di viaggio (Nominatim, routing OSM)
 mobile.js      server per il telefono e abbinamento con QR
+phonesync.js   sincronizzazione con l'app Android (rete e cloud cifrato)
+log.js         registro degli errori e diagnostica
+mobile-app/    app Android (Capacitor) con dati locali, notifiche e sincronizzazione
 updater.js     aggiornamenti dalle release di GitHub (AppImage e .deb)
 notiondb.js    database Notion: elenco, schema, righe, modifica; itinerari annidati
 sync.js        Google Calendar (OAuth PKCE), Notion API, feed .ics; unione e invio modifiche
 ics.js         parser iCalendar con fusi orari e ricorrenze
 preload.js     ponte sicuro verso l'interfaccia
 src/nlp.js     interpretazione delle frasi in italiano (condiviso)
+src/recur.js   ripetizioni (condiviso)
+src/syncmodel.js modello di sincronizzazione (condiviso con l'app Android)
 src/           interfaccia (HTML, CSS, JS senza framework; Leaflet in src/vendor per le mappe)
 ```
 
