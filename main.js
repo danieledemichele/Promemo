@@ -5,6 +5,7 @@ const vaultLib = require('./vault');
 const aiLib = require('./ai');
 const { createBackup } = require('./backup');
 const { createNotionDb } = require('./notiondb');
+const { createUpdater } = require('./updater');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -519,6 +520,14 @@ ipcMain.handle('wx:search', async (_e, name) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// ---------- Aggiornamenti ----------
+const updater = createUpdater({ app, send: (ch, v) => { if (win && !win.isDestroyed()) win.webContents.send(ch, v); }, onLog: (m) => console.log(m) });
+ipcMain.handle('upd:state', () => updater.state());
+ipcMain.handle('app:version', () => app.getVersion());
+ipcMain.handle('upd:check', () => updater.check());
+ipcMain.handle('upd:install', () => updater.install());
+const updAuto = () => { if (data && (data.settings.update || {}).auto !== false) updater.check(); };
+
 // ---------- Database Notion e viaggi ----------
 const ndb = createNotionDb({ data: () => data, secret: (id) => loadSecrets()[id] });
 ipcMain.handle('ndb:accounts', () => (data ? data.accounts.filter(a => a.provider === 'notion').map(a => ({ id: a.id, name: a.name })) : []));
@@ -727,8 +736,12 @@ function startServices() {
   setInterval(checkReminders, 20 * 1000);
   const tripAuto = () => { if (data && data.settings.trips && data.settings.trips.destDb) syncTrips().catch(e => console.warn('viaggi:', e.message)); };
   setTimeout(() => { sync.syncAll(); tripAuto(); }, 3000);
-  setInterval(() => { if (data) { sync.syncAll(); tripAuto(); } }, Math.max(5, data.settings.syncMinutes || 15) * 60000);
-  require('electron').powerMonitor.on('resume', () => setTimeout(() => { if (data) sync.syncAll(); remoteCheck(); }, 8000));
+  // intervallo letto ogni volta: si può cambiare dalle impostazioni senza riavviare
+  const syncLoop = () => setTimeout(() => { if (data) { sync.syncAll(); tripAuto(); } syncLoop(); }, Math.max(5, (data && data.settings.syncMinutes) || 15) * 60000);
+  syncLoop();
+  setTimeout(updAuto, Number(process.env.PROMEMO_UPDATE_DELAY || 15000));
+  setInterval(updAuto, 6 * 3600 * 1000);
+  require('electron').powerMonitor.on('resume', () => setTimeout(() => { if (data) sync.syncAll(); remoteCheck(); updAuto(); }, 8000));
   setTimeout(remoteCheck, 6000);
   setInterval(remoteCheck, 30 * 60000);
   setInterval(backupTick, 60 * 60000);

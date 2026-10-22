@@ -27,6 +27,21 @@ Promemo può chiedere una password a ogni apertura (*Impostazioni → Password a
 - Finché Promemo è bloccata non può inviare notifiche né sincronizzare: dopo lo sblocco resta attiva (anche nell'area di notifica) fino all'uscita.
 - I backup esportati in JSON non sono cifrati.
 
+## Aggiornamenti
+![Aggiornamento](docs/aggiornamento.png)
+
+Promemo controlla le release pubblicate su GitHub all'avvio e ogni 6 ore. Quando esce una versione nuova, accanto al meteo compare un riquadro che lampeggia; un clic mostra le note di rilascio e:
+- **AppImage**: *Aggiorna e riavvia* scarica la nuova AppImage, sostituisce quella attuale e riapre Promemo;
+- **pacchetto .deb**: *Installa e riavvia* scarica il .deb e lo installa chiedendo la password del sistema;
+- *Più tardi* ferma il lampeggio fino al prossimo avvio, *Salta questa versione* la nasconde.
+
+Il controllo automatico si spegne in *Impostazioni → Aggiornamenti*. Perché funzioni, ogni release su GitHub deve avere un tag di versione (es. `v1.10.0`) e i file `Promemo-x.y.z.AppImage` e `promemo_x.y.z_amd64.deb` allegati; il testo della release diventa la nota mostrata nell'app.
+
+## Integrazioni
+![Integrazioni](docs/integrazioni.png)
+
+*Impostazioni → Integrazioni* raccoglie tutti i servizi collegati: Google Calendar, Notion (anche più database), Calendly e calendari web con stato, ultima sincronizzazione, pausa e sincronizzazione manuale per ogni account; Viaggi e Database Notion; assistente IA, meteo, backup nel cloud e aggiornamenti; frequenza della sincronizzazione (da 5 a 60 minuti, senza riavviare).
+
 ## Viaggi
 Promemo legge da Notion i dati essenziali di ogni viaggio e l'intelligenza artificiale scrive il resto.
 
@@ -132,8 +147,8 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.9.1.AppImage e dist/promemo_1.9.1_amd64.deb
-sudo apt install ./dist/promemo_1.9.1_amd64.deb
+npm run dist        # dist/Promemo-1.10.0.AppImage e dist/promemo_1.10.0_amd64.deb
+sudo apt install ./dist/promemo_1.10.0_amd64.deb
 ```
 
 ## Scorciatoie
@@ -149,6 +164,7 @@ main.js        processo principale: archivio, promemoria, vassoio, IPC
 backup.js      backup cifrati e destinazioni (cartella, Dropbox, WebDAV, rclone)
 ai.js          motori IA (Anthropic, Ollama, compatibili OpenAI)
 vault.js       cifratura locale (scrypt + AES-256-GCM, chiave di recupero)
+updater.js     aggiornamenti dalle release di GitHub (AppImage e .deb)
 notiondb.js    database Notion: elenco, schema, righe, modifica; itinerari annidati
 sync.js        Google Calendar (OAuth PKCE), Notion API, feed .ics; unione e invio modifiche
 ics.js         parser iCalendar con fusi orari e ricorrenze
