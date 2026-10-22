@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f4f1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Promemo">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="stylesheet" href="app.css">
+  <title>Promemo</title>
+</head>
+<body>
+  <header class="top"><img src="icon.png" alt=""><div class="grow"><b id="hello">Promemo</b><small id="sub"></small></div><button id="refresh" aria-label="Aggiorna">↻</button></header>
+  <nav class="tabs"><button data-tab="oggi" class="on">Oggi</button><button data-tab="settimana">Settimana</button><button data-tab="progetti">Progetti</button></nav>
+  <main id="main"></main>
+  <form class="add" id="add"><input id="add-in" placeholder="Aggiungi: dentista martedì alle 9…" autocomplete="off" enterkeyhint="send"><button>+</button></form>
+  <div class="toast" id="toast"></div>
+  <script src="nlp.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

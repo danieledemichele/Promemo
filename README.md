@@ -27,6 +27,44 @@ Promemo può chiedere una password a ogni apertura (*Impostazioni → Password a
 - Finché Promemo è bloccata non può inviare notifiche né sincronizzare: dopo lo sblocco resta attiva (anche nell'area di notifica) fino all'uscita.
 - I backup esportati in JSON non sono cifrati.
 
+## Pianificazione automatica
+![Pianificazione](docs/pianificazione.png)
+
+Nella scheda di un compito attiva **Pianifica Promemo** e indica entro quando va fatto e quanto dura: Promemo trova uno spazio libero nel tuo orario di lavoro (blocchi tratteggiati con ✦), rispettando impegni, pausa pranzo e un margine tra un'attività e l'altra. Se un impegno occupa quel posto, il compito si sposta da solo; se lo trascini tu, resta dove l'hai messo. Orario, giorni e margine in *Impostazioni → Calendario*.
+
+## Scrivi una frase
+| Nuovo | Da qualsiasi app |
+|---|---|
+| ![Frase](docs/frase.png) | ![Aggiunta rapida](docs/aggiunta-rapida.png) |
+
+“ripetizione con Giulia giovedì alle 16 per un'ora, ricordamelo 30 minuti prima” diventa un appuntamento completo. Capisce date (oggi, domani, giovedì, il 3 novembre, 25/10, tra 2 giorni), orari (alle 9 e mezza, dalle 10 alle 12, stasera), durate, avvisi, luoghi (`@Via Roma 10`, “presso Aula Magna”), progetti (`#tecnica`), priorità (urgente) e compiti con scadenza (“studiare cap. 4 entro venerdì 2h”, pianificati da Promemo). Funziona nel pulsante *Nuovo*, nella palette (Ctrl+K), nel widget, sul telefono e nella **finestra rapida** (Ctrl+Alt+Spazio da qualsiasi app; su Wayland si collega il comando `promemo --aggiungi` a una scorciatoia di sistema).
+
+## A che ora uscire
+Per gli impegni con un luogo Promemo calcola il tragitto da casa, o dal luogo dell'impegno precedente nella stessa giornata, e mostra **“esci alle 15:20”** in agenda, nella Home e nel widget, con una notifica al momento giusto. A piedi sotto 1,3 km, altrimenti in auto (con margine per traffico e parcheggio), oppure il mezzo che scegli. Indirizzi e percorsi da OpenStreetMap; si configura in *Impostazioni → Spostamenti*.
+
+## Riepilogo del mattino e della sera
+![Riepilogo](docs/riepilogo.png)
+
+Alle 7:30 una notifica con la giornata: impegni, meteo, a che ora uscire, compiti in ritardo (da riportare a oggi o chiudere con un clic). Alle 21 cosa hai fatto, il tempo di concentrazione e cosa spostare a domani in un colpo solo. Orari in *Impostazioni → Notifiche*.
+
+## Concentrazione
+![Concentrazione](docs/concentrazione.png)
+
+Timer a cicli (25 + 5 minuti, pausa lunga ogni 4) legato a un compito: si avvia da *Concentrati* nella scheda, dalla palette o dalle Statistiche, resta visibile in alto con un anello di avanzamento e registra il tempo dedicato a ogni progetto.
+
+## Statistiche e pannelli
+![Statistiche](docs/statistiche.png)
+
+Ore in agenda per giorno e per calendario, concentrazione per attività, compiti fatti e puntualità, per settimana o mese. I **pannelli** sono tuoi: *Ore e compenso dall'agenda* (es. ripetizioni con tariffa oraria, conteggio per studente; ore di lezione per classe) e *Andamento da Notion* (es. carichi degli allenamenti nel tempo, una linea per esercizio).
+
+## Widget e telefono
+| Widget | Telefono |
+|---|---|
+| ![Widget](docs/widget.png) | ![Telefono](docs/telefono.png) |
+
+- **Widget sul desktop**: prossimo impegno con conto alla rovescia, “esci alle”, la giornata e un campo per aggiungere; sempre in primo piano, si sposta trascinandolo (anche dal menu dell'icona nell'area di notifica).
+- **Telefono**: Promemo serve un'app web nella rete di casa. In *Impostazioni → Telefono* si attiva e si inquadra il codice QR; poi *Aggiungi a schermata Home*. Agenda di oggi e della settimana, compiti da spuntare, progetti, viaggi e aggiunta con una frase. Fuori casa funziona attraverso una VPN (es. WireGuard). L'accesso richiede la chiave del QR; il collegamento è HTTP, quindi va usato solo in rete locale o in VPN.
+
 ## Aggiornamenti
 ![Aggiornamento](docs/aggiornamento.png)
 
@@ -35,7 +73,7 @@ Promemo controlla le release pubblicate su GitHub all'avvio e ogni 6 ore. Quando
 - **pacchetto .deb**: *Installa e riavvia* scarica il .deb e lo installa chiedendo la password del sistema;
 - *Più tardi* ferma il lampeggio fino al prossimo avvio, *Salta questa versione* la nasconde.
 
-Il controllo automatico si spegne in *Impostazioni → Aggiornamenti*. Perché funzioni, ogni release su GitHub deve avere un tag di versione (es. `v1.10.0`) e i file `Promemo-x.y.z.AppImage` e `promemo_x.y.z_amd64.deb` allegati; il testo della release diventa la nota mostrata nell'app.
+Il controllo automatico si spegne in *Impostazioni → Aggiornamenti*. Perché funzioni, ogni release su GitHub deve avere un tag di versione (es. `v1.11.0`) e i file `Promemo-x.y.z.AppImage` e `promemo_x.y.z_amd64.deb` allegati; il testo della release diventa la nota mostrata nell'app.
 
 ## Integrazioni
 ![Integrazioni](docs/integrazioni.png)
@@ -147,12 +185,12 @@ npm start
 
 ## Pacchetti
 ```bash
-npm run dist        # dist/Promemo-1.10.0.AppImage e dist/promemo_1.10.0_amd64.deb
-sudo apt install ./dist/promemo_1.10.0_amd64.deb
+npm run dist        # dist/Promemo-1.11.0.AppImage e dist/promemo_1.11.0_amd64.deb
+sudo apt install ./dist/promemo_1.11.0_amd64.deb
 ```
 
 ## Scorciatoie
-Ctrl+K palette comandi · Ctrl+J assistente · Ctrl+B barra laterale · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni principali · Esc chiude popup e finestre.
+Ctrl+Alt+Spazio aggiunta rapida (da qualsiasi app) · Ctrl+K palette comandi e frasi · Ctrl+J assistente · Ctrl+B barra laterale · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni principali · Esc chiude popup e finestre.
 
 ## Dati
 `~/.config/Promemo/promemo.json` (scrittura atomica). Backup da *Impostazioni → Esporta*.
@@ -164,11 +202,15 @@ main.js        processo principale: archivio, promemoria, vassoio, IPC
 backup.js      backup cifrati e destinazioni (cartella, Dropbox, WebDAV, rclone)
 ai.js          motori IA (Anthropic, Ollama, compatibili OpenAI)
 vault.js       cifratura locale (scrypt + AES-256-GCM, chiave di recupero)
+quick.js       creazione da una frase (finestra rapida, widget, telefono)
+travel.js      tempo di viaggio (Nominatim, routing OSM)
+mobile.js      server per il telefono e abbinamento con QR
 updater.js     aggiornamenti dalle release di GitHub (AppImage e .deb)
 notiondb.js    database Notion: elenco, schema, righe, modifica; itinerari annidati
 sync.js        Google Calendar (OAuth PKCE), Notion API, feed .ics; unione e invio modifiche
 ics.js         parser iCalendar con fusi orari e ricorrenze
 preload.js     ponte sicuro verso l'interfaccia
+src/nlp.js     interpretazione delle frasi in italiano (condiviso)
 src/           interfaccia (HTML, CSS, JS senza framework; Leaflet in src/vendor per le mappe)
 ```
 

@@ -6,6 +6,8 @@ let data = null;
 // sezioni aggiunte da altri file (viaggi, database Notion)
 const EXTRA_NAV = [];   // [view, icona, etichetta, extra()]
 const EXTRA_VIEWS = {}; // view → { title, render(), full?, after?() }
+const PALETTE_EXTRA = []; // comandi aggiunti da altri file
+const PALETTE_TOP = [];   // (testo) → voci in cima (es. crea da frase)
 const ui = {
   view: 'home',
   projectId: null,
@@ -402,7 +404,7 @@ function timelineRow(it, now) {
     <div class="tl-dot">${it.step ? `<button class="check mini ${it.step.done ? 'on' : ''}" data-action="complete-step" data-pid="${it.project.id}" data-id="${it.step.id}" title="Segna come fatto">${icon('i-check')}</button>` : '<i></i>'}</div>
     <div class="tl-body">
       <div class="tl-title">${esc(itemTitle(it))}${live ? '<span class="pill live">In corso</span>' : ''}${it.step && !it.step.done && s < now ? '<span class="pill live">In ritardo</span>' : ''}</div>
-      <div class="tl-sub"><span class="tl-grp"><i></i>${esc(g.name)}</span>${sub ? '<span class="sep"></span>' + sub : ''}</div>
+      <div class="tl-sub"><span class="tl-grp"><i></i>${esc(g.name)}</span>${sub ? '<span class="sep"></span>' + sub : ''}${it.ev && typeof travelBadge === 'function' ? travelBadge(it.ev) : ''}</div>
     </div>
   </div>`;
 }
@@ -700,10 +702,11 @@ function viewTimeGrid(days) {
       const top = s / 60 * HOUR_H, h = Math.max(20, (e - s) / 60 * HOUR_H - 2);
       const edit = canEdit(it);
       const id = it.ev ? it.ev.id : it.step.id;
-      return `<div class="tg-ev ${ui.sheet && ui.sheet.id === id ? 'sheet-on' : ''} ${past ? 'past' : ''} ${h < 34 ? 'short' : ''} ${it.step ? 'step' : ''} ${it.step && it.step.done ? 'done' : ''} ${edit ? 'editable' : 'ro'}" style="top:${top}px;height:${h}px;left:calc(${col / n * 100}% + 1px);width:calc(${100 / n}% - 4px);--gc:${esc(itemColor(it))}"
+      return `<div class="tg-ev ${ui.sheet && ui.sheet.id === id ? 'sheet-on' : ''} ${past ? 'past' : ''} ${h < 34 ? 'short' : ''} ${it.step ? 'step' : ''} ${it.step && it.step.auto ? 'auto' : ''} ${it.step && it.step.done ? 'done' : ''} ${edit ? 'editable' : 'ro'}" style="top:${top}px;height:${h}px;left:calc(${col / n * 100}% + 1px);width:calc(${100 / n}% - 4px);--gc:${esc(itemColor(it))}"
         data-kind="${it.ev ? 'ev' : 'st'}" data-id="${id}" ${it.step ? `data-pid="${it.project.id}"` : ''} data-date="${dayKey(d)}" data-s="${s}" data-e="${e}">
-        <div class="tg-ev-t">${it.step ? (it.step.done ? '✓ ' : '◯ ') : ''}${esc(itemTitle(it))}</div>
+        <div class="tg-ev-t">${it.step ? (it.step.done ? '✓ ' : it.step.auto ? '✦ ' : '◯ ') : ''}${esc(itemTitle(it))}</div>
         <div class="tg-ev-time">${fmtHM(itemStart(it))}${it.ev ? '–' + fmtHM(itemEnd(it)) : it.step.duration ? ' · ' + it.step.duration + ' min' : ''}${it.ev && it.ev.location ? ' · ' + esc(it.ev.location) : ''}</div>
+        ${it.ev && typeof travelBadge === 'function' ? travelBadge(it.ev, true) : ''}
         ${edit && it.ev ? '<i class="tg-rs"></i>' : ''}
       </div>`;
     }).join('');
@@ -998,7 +1001,9 @@ function openPalette() {
       const ps = v ? data.projects.filter(p => has(p.title) || p.steps.some(st => has(st.text))).slice(0, 5).map(p => ({ t: p.title, i: 'i-folder', sub: nextStep(p)?.text || '', sec: 'Progetti', run: () => go('progetti', { projectId: p.id, projFilter: p.status === 'archiviato' ? 'archivio' : 'attivi', catFilter: null }) })) : [];
       const now = new Date();
       const es = v ? data.events.filter(e => has(e.title) || has(e.location)).sort((a, b) => Math.abs(parse(a.start) - now) - Math.abs(parse(b.start) - now)).slice(0, 6).map(e => ({ t: e.title, i: 'i-calendar', color: groupInfo(e).color, sub: `${relDay(parse(e.start))}${e.allDay ? '' : ' · ' + fmtHM(parse(e.start))}`, sec: 'Eventi', run: () => modalEvent(e) })) : [];
-      items = [...es, ...ps, ...c];
+      const top = PALETTE_TOP.flatMap(f => f(q.value) || []).map(x => ({ ...x, sec: x.sec || 'Crea' }));
+      const ex = PALETTE_EXTRA.filter(x => !v || has(x.t) || has(x.k)).map(x => ({ ...x, sec: 'Azioni' }));
+      items = [...top, ...es, ...ps, ...c, ...ex];
       idx = Math.min(idx, Math.max(0, items.length - 1));
       let last = '';
       list.innerHTML = items.map((x, n) => { const head = x.sec !== last ? `<div class="pal-sec">${x.sec}</div>` : ''; last = x.sec; return `${head}<button class="pal-item ${n === idx ? 'on' : ''}" data-n="${n}">${x.color ? `<i class="pal-dot" style="background:${esc(x.color)}"></i>` : icon(x.i)}<span class="grow">${esc(x.t)}</span>${x.sub ? `<span class="tiny">${esc(x.sub)}</span>` : ''}</button>`; }).join('') || '<div class="empty" style="margin:10px">Nessun risultato</div>';
@@ -1063,13 +1068,14 @@ function go(view, extra = {}) {
 
 // ---------- Modali ----------
 function openModal(html, onMount) {
+  $('#modal').className = 'modal';
   $('#modal').innerHTML = html;
   $('#modal-backdrop').hidden = false;
   onMount && onMount($('#modal'));
   const f = $('#modal').querySelector('input:not([type=checkbox]),textarea');
   f && setTimeout(() => f.focus(), 30);
 }
-function closeModal() { $('#modal-backdrop').hidden = true; $('#modal').innerHTML = ''; $('#modal').classList.remove('modal-palette', 'modal-settings'); }
+function closeModal() { $('#modal-backdrop').hidden = true; $('#modal').innerHTML = ''; $('#modal').className = 'modal'; }
 
 const remSelect = (val, name = 'reminder') =>
   `<select name="${name}">${REMINDERS.map(([v, l]) => `<option value="${v === null ? '' : v}" ${val === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
@@ -1087,12 +1093,13 @@ function defaultStart(dateKey) {
 function modalNew() {
   openModal(`
     <h2>Cosa vuoi aggiungere?</h2>
+    ${typeof quickFieldHTML === 'function' ? quickFieldHTML() : ''}
     <div class="type-picker">
       <button data-action="new-project">${icon('i-folder')}Progetto<small>Un piano, un viaggio, un obiettivo</small></button>
       <button data-action="new-event">${icon('i-calendar')}Appuntamento<small>Con data, ora e luogo</small></button>
       <button data-action="new-step">${icon('i-bell')}Promemoria<small>Un passo da fare entro una data</small></button>
     </div>
-    <div class="modal-actions"><button class="btn" data-action="close-modal">Annulla</button></div>`);
+    <div class="modal-actions"><button class="btn" data-action="close-modal">Annulla</button></div>`, (m) => typeof quickFieldBind === 'function' && quickFieldBind(m));
 }
 
 function modalProject() {

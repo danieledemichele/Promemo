@@ -53,7 +53,10 @@ function sheetHTML() {
         </div>
 
         <div class="sh-props">
-          <label class="sh-prop"><span>${icon('i-calendar')} Scadenza</span><input type="datetime-local" data-shf="due" value="${esc(st.due || '')}"></label>
+          <label class="sh-prop"><span>${icon('i-spark')} Pianifica Promemo</span><input type="checkbox" class="switch" data-shf="auto" ${st.auto ? 'checked' : ''} title="Promemo trova il tempo libero prima della scadenza e lo sposta se qualcosa cambia"></label>
+          ${st.auto ? `<label class="sh-prop"><span>${icon('i-calendar')} Entro</span><input type="datetime-local" data-shf="deadline" value="${esc(st.deadline || '')}"></label>
+          <div class="sh-prop sh-auto-info"><span>${icon('i-clock')} Quando</span><span>${st.due ? `${esc(relDay(parse(st.due)))} · ${fmtHM(parse(st.due))}${st.autoLate ? ' <b class="late">oltre la scadenza</b>' : ''}${st.autoDue && st.due !== st.autoDue ? ' · fissato da te' : ''}` : 'Cerco uno spazio libero…'}</span></div>`
+          : `<label class="sh-prop"><span>${icon('i-calendar')} Scadenza</span><input type="datetime-local" data-shf="due" value="${esc(st.due || '')}"></label>`}
           <label class="sh-prop"><span>${icon('i-clock')} Durata</span><select data-shf="duration">${[15, 30, 45, 60, 90, 120, 180, 240].map(m => `<option value="${m}" ${(+st.duration || 30) === m ? 'selected' : ''}>${m < 60 ? m + ' min' : (m / 60) + ' h'}</option>`).join('')}</select></label>
           <label class="sh-prop"><span>${icon('i-bell')} Promemoria</span><select data-shf="reminder">${REMINDERS.map(([v, l]) => `<option value="${v === null ? '' : v}" ${st.reminder === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <label class="sh-prop"><span>${icon('i-star')} Priorità</span><select data-shf="priority">${PRIO.map(([v, l]) => `<option value="${v}" ${(st.priority || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -80,6 +83,7 @@ function sheetHTML() {
       <div class="sh-foot">
         <button class="btn small danger" data-sh="del">${icon('i-trash')} Elimina</button>
         <span class="grow"></span>
+        ${!st.done ? `<button class="btn small" data-action="focus-start" data-pid="${p.id}" data-id="${st.id}">${icon('i-target')} Concentrati</button>` : ''}
         <button class="btn small" data-sh="project">Apri progetto</button>
       </div>
     </aside>`;
@@ -108,6 +112,7 @@ function sheetHTML() {
       </div>
       <div class="sh-props">
         ${ev.location ? `<div class="sh-prop"><span>${icon('i-pin')} Luogo</span><b>${/^online · https?:/i.test(ev.location) ? `<a href="#" data-sh="url" data-url="${esc(ev.location.replace(/^online · /i, ''))}">Collegamento online</a>` : esc(ev.location)}</b></div>` : ''}
+        ${typeof travelSheetRow === 'function' ? travelSheetRow(ev) : ''}
         <label class="sh-prop"><span>${icon('i-folder')} Progetto</span><select data-shf="ev-project"><option value="">Nessuno</option>${data.projects.filter(x => x.status !== 'archiviato' || x.id === ev.projectId).map(x => `<option value="${x.id}" ${x.id === ev.projectId ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select></label>
         <label class="sh-prop"><span>${icon('i-bell')} Promemoria</span><select data-shf="ev-reminder">${REMINDERS.map(([v, l]) => `<option value="${v === null ? '' : v}" ${ev.reminder === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       </div>
@@ -174,6 +179,8 @@ document.addEventListener('change', (e) => {
     const { p, st } = t;
     if (k === 'due') { st.due = f.value || null; delete st.notifiedAt; if (!st.due) st.reminder = null; }
     if (k === 'duration') st.duration = +f.value;
+    if (k === 'auto') { st.auto = f.checked; if (st.auto) { if (!st.deadline) st.deadline = st.due || iso(addDays(new Date(), 7)).slice(0, 10) + 'T23:59'; delete st.autoDue; } else { delete st.autoDue; delete st.autoLate; } }
+    if (k === 'deadline') { st.deadline = f.value || null; delete st.autoDue; }
     if (k === 'reminder') { st.reminder = f.value === '' ? null : +f.value; delete st.notifiedAt; }
     if (k === 'priority') st.priority = f.value;
     touch(p); save(); refreshKeepFocus();

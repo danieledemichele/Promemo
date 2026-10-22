@@ -1,0 +1,1 @@
+{ "name": "Promemo", "short_name": "Promemo", "start_url": "./", "display": "standalone", "background_color": "#f5f4f1", "theme_color": "#e5562a", "icons": [{ "src": "icon.png", "sizes": "512x512", "type": "image/png" }] }

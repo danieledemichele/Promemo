@@ -1,7 +1,7 @@
 {
   "name": "promemo",
   "productName": "Promemo",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Impegni, piani e promemoria in un unico posto, con Google Calendar, Notion, Calendly e calendari .ics. App desktop per Linux.",
   "main": "main.js",
   "author": "Daniele De Michele <daniele@danieledemichele.it>",
@@ -30,6 +30,9 @@
       "backup.js",
       "notiondb.js",
       "updater.js",
+      "quick.js",
+      "travel.js",
+      "mobile.js",
       "src/**/*",
       "build/icon.png"
     ],
@@ -47,5 +50,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/danieledemichele/Promemo.git"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
   }
 }

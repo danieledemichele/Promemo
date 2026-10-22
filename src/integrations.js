@@ -57,6 +57,12 @@ paneHTML = function (id, ls) {
       wxc.enabled ? [esc(wxc.name), 'ok'] : ['Spento', ''], `<button class="btn small" data-int-pane="meteo">Configura</button>`)}
     ${intCard(`<span class="int-ic">${icon('i-archive')}</span>`, 'Backup nel cloud', 'Copie cifrate su cartella sincronizzata, Dropbox, Nextcloud o rclone',
       bk.enabled && bk.dest ? [BKN[bk.dest.type || bk.dest] || 'Attivo', 'ok'] : null, `<button class="btn small" data-int-pane="dati">Configura</button>`)}
+    ${intCard(`<span class="int-ic">${icon('i-route')}</span>`, 'Spostamenti', 'Tempo di viaggio e ora di uscita, da OpenStreetMap',
+      (s.travel || {}).enabled ? [(s.travel.home && s.travel.home.name) || 'Attivo', 'ok'] : null, `<button class="btn small" data-int-pane="spostamenti">Configura</button>`)}
+    ${intCard(`<span class="int-ic">${icon('i-phone')}</span>`, 'Telefono', 'Agenda, compiti e aggiunta rapida dal telefono, in rete locale o VPN',
+      (s.mobile || {}).enabled ? ['Attivo', 'ok'] : null, `<button class="btn small" data-int-pane="telefono">Configura</button>`)}
+    ${intCard(`<span class="int-ic">${icon('i-widget')}</span>`, 'Widget e scorciatoia', 'Prossimo impegno sempre visibile, aggiunta rapida da qualsiasi app',
+      (s.widget || {}).enabled ? ['Widget attivo', 'ok'] : null, `<button class="btn small" data-int-pane="desktop">Configura</button>`)}
     ${intCard(`<span class="int-ic">${icon('i-refresh')}</span>`, 'Aggiornamenti da GitHub', 'Nuove versioni di Promemo, con avviso accanto al meteo',
       u.available ? [`Disponibile la ${esc(u.available.version)}`, 'warn'] : (s.update || {}).auto === false ? ['Manuale', ''] : ['Automatico', 'ok'], `<button class="btn small" data-int-pane="aggiornamenti">Apri</button>`)}
     <div class="int-sec">Sincronizzazione</div>

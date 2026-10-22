@@ -1,11 +1,14 @@
 // Promemo — processo principale Electron
-const { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage, dialog, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage, dialog, shell, safeStorage, globalShortcut, screen } = require('electron');
 const { createSync } = require('./sync');
 const vaultLib = require('./vault');
 const aiLib = require('./ai');
 const { createBackup } = require('./backup');
 const { createNotionDb } = require('./notiondb');
 const { createUpdater } = require('./updater');
+const quick = require('./quick');
+const { createTravel } = require('./travel');
+const { createMobile } = require('./mobile');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -154,7 +157,10 @@ function commit() {
   data.rev = (data.rev || 0) + 1;
   saveData(data);
   if (win) win.webContents.send('data-changed', data);
+  sideWindows('data-changed', data);
 }
+// finestre secondarie (widget, aggiunta rapida) ricevono gli stessi aggiornamenti
+function sideWindows(ch, v) { for (const w of [widgetWin, quickWin]) if (w && !w.isDestroyed()) w.webContents.send(ch, v); }
 
 const sync = createSync({
   data: () => data,
@@ -250,7 +256,7 @@ function createWindow() {
     if (!data) { quitting = true; app.quit(); return; } // bloccata: chiudere significa uscire
     if (!quitting && data.settings.closeToTray && tray) { e.preventDefault(); win.hide(); }
   });
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => { win = null; for (const w of [widgetWin, quickWin]) if (w && !w.isDestroyed()) w.destroy(); });
   win.on('maximize', () => win.webContents.send('maximized', true));
   win.on('unmaximize', () => win.webContents.send('maximized', false));
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
@@ -265,7 +271,10 @@ function createTray() {
     tray.setToolTip('Promemo');
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: 'Apri Promemo', click: showWindow },
+      { label: 'Aggiungi al volo…', click: () => openQuick() },
       { label: 'Nuovo…', click: () => { showWindow(); if (data) win.webContents.send('navigate', { action: 'new' }); } },
+      { label: 'Widget sul desktop', click: () => toggleWidget() },
+      { label: 'Riepilogo di oggi', click: () => { showWindow(); win.webContents.send('navigate', { action: 'brief', kind: new Date().getHours() >= 17 ? 'sera' : 'mattina' }); } },
       { type: 'separator' },
       { label: 'Esci', click: () => { quitting = true; app.quit(); } },
     ]));
@@ -275,17 +284,30 @@ function createTray() {
 
 // ---------- IPC ----------
 ipcMain.handle('data:get', () => data);
+let travelTimer = null;
 ipcMain.handle('data:set', (_e, d) => {
   if (!data) return null;
   const prevAuto = data.settings.autostart;
   // viaggi ed eventi dei viaggi li gestisce il processo principale
   d.trips = data.trips; d.events = d.events.filter(e => !e.tripRef).concat(data.events.filter(e => e.tripRef));
+  // ciò che è stato aggiunto al volo (finestra rapida, telefono) dopo l'ultima lettura dell'interfaccia non va perso
+  d.travel = data.travel; d.geo = data.geo; d.briefDone = data.briefDone;
+  const base = d.rev || 0, inIds = new Set(d.events.map(e => e.id));
+  for (const e of data.events) if (e.qrev > base && !inIds.has(e.id)) d.events.push(e);
+  for (const p of data.projects) {
+    const q = d.projects.find(x => x.id === p.id);
+    if (!q) { if (p.qrev > base) d.projects.push(p); continue; }
+    const ids = new Set(q.steps.map(x => x.id));
+    for (const st of p.steps) if (st.qrev > base && !ids.has(st.id)) q.steps.push(st);
+  }
   const r = sync.reconcile(data, d);
   data = r.data; saveData(data);
   markDirty();
   if (r.needsPush) schedulePush();
   if (prevAuto !== data.settings.autostart) setAutostart(data.settings.autostart);
   checkReminders();
+  sideWindows('data-changed', data);
+  clearTimeout(travelTimer); travelTimer = setTimeout(() => travel.refresh().catch(() => {}), 3000);
   return { rev: data.rev, accounts: data.accounts, pendingDeletes: data.pendingDeletes, events: data.events };
 });
 
@@ -520,6 +542,116 @@ ipcMain.handle('wx:search', async (_e, name) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// ---------- Aggiunta al volo da una frase ----------
+function quickAdd(text, opts) {
+  if (!data) throw new Error('Promemo è bloccata: sbloccala per aggiungere');
+  const r = quick.createFromText(data, text, opts);
+  commit();
+  if (r.push) schedulePush();
+  return r;
+}
+ipcMain.handle('quick:add', wrap(({ text, pid }) => quickAdd(text, { pid })));
+
+// ---------- Widget sul desktop e aggiunta rapida ----------
+let widgetWin = null, quickWin = null, shortcutOk = null;
+const sidePrefs = { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true };
+const widgetCfg = () => ({ enabled: false, onTop: true, x: null, y: null, ...((data && data.settings.widget) || {}) });
+function setWidgetCfg(patch) { if (!data) return; data.settings.widget = { ...widgetCfg(), ...patch }; commit(); }
+function openWidget() {
+  if (!data) return;
+  if (widgetWin && !widgetWin.isDestroyed()) { widgetWin.showInactive(); return; }
+  const c = widgetCfg(), wa = screen.getPrimaryDisplay().workArea;
+  widgetWin = new BrowserWindow({ width: 300, height: 380, x: c.x ?? wa.x + wa.width - 320, y: c.y ?? wa.y + 20, frame: false, transparent: true, resizable: false, skipTaskbar: true, alwaysOnTop: c.onTop, focusable: true, show: false, title: 'Promemo · widget', icon: ICON, webPreferences: sidePrefs });
+  widgetWin.loadFile(path.join(__dirname, 'src', 'widget.html'));
+  widgetWin.once('ready-to-show', () => widgetWin.showInactive());
+  let mt = null;
+  widgetWin.on('moved', () => { clearTimeout(mt); mt = setTimeout(() => { if (widgetWin && !widgetWin.isDestroyed()) { const [x, y] = widgetWin.getPosition(); data.settings.widget = { ...widgetCfg(), x, y }; saveData(data); } }, 400); });
+  widgetWin.on('closed', () => { widgetWin = null; });
+}
+function closeWidget() { if (widgetWin && !widgetWin.isDestroyed()) widgetWin.close(); widgetWin = null; }
+function toggleWidget(force) { const on = force ?? !(widgetWin && !widgetWin.isDestroyed()); setWidgetCfg({ enabled: on }); on ? openWidget() : closeWidget(); return on; }
+function openQuick() {
+  if (!data) { showWindow(); return; }
+  const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  if (!quickWin || quickWin.isDestroyed()) {
+    quickWin = new BrowserWindow({ width: 640, height: 230, x: Math.round(wa.x + (wa.width - 640) / 2), y: Math.round(wa.y + wa.height * 0.22), frame: false, transparent: true, resizable: false, skipTaskbar: true, alwaysOnTop: true, show: false, title: 'Promemo · aggiungi', icon: ICON, webPreferences: sidePrefs });
+    quickWin.loadFile(path.join(__dirname, 'src', 'quick.html'));
+    quickWin.on('blur', () => { if (quickWin && !quickWin.isDestroyed() && !quickWin.webContents.isDevToolsOpened()) quickWin.hide(); });
+    quickWin.on('closed', () => { quickWin = null; });
+    quickWin.once('ready-to-show', () => { quickWin.show(); quickWin.focus(); });
+  } else { quickWin.setPosition(Math.round(wa.x + (wa.width - 640) / 2), Math.round(wa.y + wa.height * 0.22)); quickWin.show(); quickWin.focus(); quickWin.webContents.send('quick-open'); }
+}
+function registerShortcut() {
+  try { globalShortcut.unregisterAll(); } catch { /* */ }
+  const sc = (data && data.settings.quickShortcut) ?? 'CommandOrControl+Alt+Space';
+  if (!sc) { shortcutOk = null; return; }
+  try { shortcutOk = globalShortcut.register(sc, openQuick); } catch { shortcutOk = false; }
+}
+ipcMain.handle('widget:toggle', (_e, on) => toggleWidget(on));
+ipcMain.handle('widget:state', () => ({ ...widgetCfg(), open: !!(widgetWin && !widgetWin.isDestroyed()) }));
+ipcMain.handle('widget:set', (_e, patch) => { setWidgetCfg(patch); if (widgetWin && !widgetWin.isDestroyed() && 'onTop' in patch) widgetWin.setAlwaysOnTop(!!patch.onTop); return widgetCfg(); });
+ipcMain.handle('quick:open', () => openQuick());
+ipcMain.handle('quick:hide', () => { if (quickWin && !quickWin.isDestroyed()) quickWin.hide(); });
+ipcMain.handle('quick:resize', (_e, h) => { if (quickWin && !quickWin.isDestroyed()) quickWin.setSize(640, Math.max(90, Math.min(420, Math.round(h)))); });
+ipcMain.handle('shortcut:set', (_e, sc) => { if (data) { data.settings.quickShortcut = sc; commit(); } registerShortcut(); return shortcutOk; });
+ipcMain.handle('shortcut:state', () => ({ exec: process.env.APPIMAGE || (app.isPackaged ? 'promemo' : 'npx electron .'), shortcut: (data && data.settings.quickShortcut) ?? 'CommandOrControl+Alt+Space', ok: shortcutOk, wayland: !!process.env.WAYLAND_DISPLAY }));
+ipcMain.handle('main:show', (_e, route) => { showWindow(); if (route && win) win.webContents.send('navigate', route); });
+
+// ---------- Promemo sul telefono ----------
+const mobile = createMobile({ data: () => data, commit, quickAdd: (t, o) => quickAdd(t, o), root: __dirname, onChange: () => { if (win) win.webContents.send('mobile-status', mobile.status()); } });
+ipcMain.handle('mobile:status', () => mobile.status());
+ipcMain.handle('mobile:set', (_e, patch) => {
+  if (!data) return null;
+  const c = { enabled: false, port: 8787, token: '', ...(data.settings.mobile || {}), ...patch };
+  if (!c.token || patch.newToken) c.token = require('crypto').randomBytes(18).toString('base64url');
+  delete c.newToken;
+  data.settings.mobile = c; commit();
+  mobile.start(); if (!c.enabled) mobile.stop();
+  return mobile.status();
+});
+ipcMain.handle('mobile:qr', async (_e, text) => require('qrcode').toString(String(text), { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }));
+
+// ---------- Riepilogo del mattino e della sera ----------
+function briefCheck() {
+  if (!data || !data.settings.notifications) return;
+  const b = { enabled: true, morning: '07:30', evening: '21:00', ...(data.settings.brief || {}) };
+  if (!b.enabled) return;
+  const now = new Date(), today = now.toISOString().slice(0, 10), hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const loc = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const day = loc(now);
+  data.briefDone = data.briefDone || {};
+  const due = (t) => t && hm >= t && hm < String(Math.min(23, +t.slice(0, 2) + 3)).padStart(2, '0') + t.slice(2);
+  const evToday = data.events.filter(e => e.start && e.start.slice(0, 10) <= day && (e.end || e.start).slice(0, 10) >= day && !(e.tripRef && e.allDay));
+  const steps = data.projects.filter(p => p.status !== 'archiviato').flatMap(p => p.steps.map(st => ({ p, st })));
+  if (due(b.morning) && data.briefDone.morning !== day) {
+    data.briefDone.morning = day;
+    const timed = evToday.filter(e => !e.allDay && e.start.slice(0, 10) === day).sort((a, c) => a.start.localeCompare(c.start));
+    const todo = steps.filter(x => !x.st.done && x.st.due && x.st.due.slice(0, 10) === day).length;
+    const late = steps.filter(x => !x.st.done && x.st.due && x.st.due.slice(0, 10) < day).length;
+    const first = timed[0], tr = first && data.travel && data.travel[first.id];
+    const lines = [timed.length ? `${timed.length} ${timed.length === 1 ? 'impegno' : 'impegni'}, il primo alle ${first.start.slice(11, 16)}: ${first.title}` : 'Nessun impegno in agenda'];
+    if (tr && tr.leaveAt && !tr.same) lines.push(`Esci alle ${tr.leaveAt.slice(11, 16)}`);
+    if (todo) lines.push(`${todo} ${todo === 1 ? 'compito' : 'compiti'} per oggi`);
+    if (late) lines.push(`${late} in ritardo`);
+    notify('Buongiorno ☀️ Ecco la tua giornata', lines.join(' · '), { action: 'brief', kind: 'mattina' });
+    commit();
+  }
+  if (due(b.evening) && data.briefDone.evening !== day) {
+    data.briefDone.evening = day;
+    const done = steps.filter(x => x.st.done && x.st.doneAt && x.st.doneAt.slice(0, 10) === day).length;
+    const open = steps.filter(x => !x.st.done && x.st.due && x.st.due.slice(0, 10) <= day).length;
+    const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1); const tk = loc(tmr);
+    const first = data.events.filter(e => !e.allDay && e.start && e.start.slice(0, 10) === tk).sort((a, c) => a.start.localeCompare(c.start))[0];
+    notify('Com’è andata oggi 🌙', [`${done} ${done === 1 ? 'cosa fatta' : 'cose fatte'}`, open ? `${open} da spostare` : 'niente in sospeso', first ? `domani si parte alle ${first.start.slice(11, 16)}` : 'domani nessun impegno'].join(' · '), { action: 'brief', kind: 'sera' });
+    commit();
+  }
+}
+
+// ---------- Tempo di viaggio ----------
+const travel = createTravel({ data: () => data, commit, notify, version: app.getVersion() });
+ipcMain.handle('travel:search', wrap((q) => travel.search(q, 6)));
+ipcMain.handle('travel:refresh', wrap(async () => { if (data) { data.travel = {}; } return travel.refresh(); }));
+
 // ---------- Aggiornamenti ----------
 const updater = createUpdater({ app, send: (ch, v) => { if (win && !win.isDestroyed()) win.webContents.send(ch, v); }, onLog: (m) => console.log(m) });
 ipcMain.handle('upd:state', () => updater.state());
@@ -732,8 +864,14 @@ let servicesStarted = false;
 function startServices() {
   if (servicesStarted) return;
   servicesStarted = true;
+  registerShortcut();
+  mobile.start();
+  if (widgetCfg().enabled) setTimeout(openWidget, 1500);
+  if (process.argv.includes('--aggiungi') || process.argv.includes('--quick')) setTimeout(openQuick, 800);
   checkReminders();
-  setInterval(checkReminders, 20 * 1000);
+  setInterval(() => { checkReminders(); travel.checkLeave(); briefCheck(); }, 20 * 1000);
+  setTimeout(() => travel.refresh().catch(() => {}), 5000);
+  setInterval(() => travel.refresh().catch(() => {}), 10 * 60000);
   const tripAuto = () => { if (data && data.settings.trips && data.settings.trips.destDb) syncTrips().catch(e => console.warn('viaggi:', e.message)); };
   setTimeout(() => { sync.syncAll(); tripAuto(); }, 3000);
   // intervallo letto ogni volta: si può cambiare dalle impostazioni senza riavviare
@@ -752,7 +890,8 @@ function startServices() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', showWindow);
+  app.on('second-instance', (_e, argv) => { if (argv.includes('--aggiungi') || argv.includes('--quick')) openQuick(); else if (argv.includes('--widget')) toggleWidget(); else showWindow(); });
+  app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { /* */ } });
   app.whenReady().then(() => {
     app.setAppUserModelId('it.danieledemichele.promemo');
     vault = readVault();
