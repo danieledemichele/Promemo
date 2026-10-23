@@ -29,6 +29,14 @@ Promemo si comporta come un assistente personale anche quando non gli chiedi nie
 
 Le cose importanti arrivano anche come notifica (al massimo 6 al giorno, mai nelle ore di silenzio). L'orologio in alto a destra della card apre lo storico di **cosa ho notato**.
 
+**Legge anche la posta** (Gmail, sola lettura): attiva *Leggi la posta* sull'account Google in *Account collegati*. Gli inviti di calendario vengono riconosciuti sempre; con un motore IA anche appuntamenti, convocazioni, prenotazioni e scadenze scritti nel testo delle email. Ogni cosa trovata arriva come suggerimento con *Aggiungi in agenda* (o *Aggiungi il compito*, per le scadenze) e *Apri la mail*; se è già in agenda non viene proposta. Serve abilitare la Gmail API e il permesso `gmail.readonly` nel tuo progetto Google Cloud (le istruzioni sono nella finestra di collegamento).
+
+## Piano di studio
+*Nuovo → Piano di studio* (o Ctrl+K “piano di studio”): esame, data e argomenti con le ore (“Travi iperstatiche — 6”). Promemo crea un progetto con le sessioni, le distribuisce fino all'esame nelle fasce e nei giorni che scegli, con un massimo di ore al giorno, aggiunge i **ripassi distanziati** (il giorno dopo, dopo 3 giorni e dopo una settimana) e negli ultimi giorni una simulazione e il ripasso generale. Le sessioni sono compiti pianificati da soli: se ne salti una o arriva un impegno, si spostano. Nel progetto vedi a che punto sei rispetto a dove dovresti essere e puoi cambiare ore al giorno, fascia e giorni; l'assistente ti avvisa se resti indietro e propone di aumentare le ore.
+
+## Ripetizioni con Calendly
+Gli slot fissi restano su Calendly, come prima: gli studenti scelgono l'orario da soli. Promemo legge i tuoi orari di disponibilità e ti avvisa quando un impegno che **Calendly non vede** (creato solo in Promemo, da Notion o da un calendario web) cade in uno slot, così puoi chiuderlo prima che qualcuno prenoti. Ogni prenotazione ha la **scheda dello studente**: lezioni fatte, prossima lezione, cosa ha scritto nella prenotazione, i tuoi appunti delle volte precedenti e un campo per gli appunti di questa lezione. Prima di una lezione l'assistente ti ricorda cosa avevate fatto l'ultima volta; dopo, ti chiede due righe su com'è andata. Se gli slot non si leggono, rigenera il token personale di Calendly con il permesso sulla disponibilità.
+
 
 Promemo può chiedere una password a ogni apertura (*Impostazioni → Password all'avvio*, proposta anche al primo avvio).
 - I dati (`promemo.enc`) e le credenziali degli account (`credenziali.enc`) vengono cifrati con **AES-256-GCM**; la chiave è derivata dalla password con **scrypt**. Le copie non cifrate vengono eliminate.
@@ -78,7 +86,9 @@ Ore in agenda per giorno e per calendario, concentrazione per attività, compiti
 ## App Android e sincronizzazione
 <img src="docs/assistente-telefono.png" width="280" align="right" alt="Assistente sul telefono">
 
-La prima schermata dell'app è l'**Assistente**: il riepilogo della giornata, l'impegno in corso con l'avanzamento (o il prossimo), i suggerimenti con le loro azioni e, in basso, il tasto **Nuovo evento** con il modulo completo, più ✎ per scrivere una frase e 🎙 per dettarla con il microfono della tastiera. Le regole girano anche sul telefono, sui dati appena sincronizzati; il piano scritto dall'IA e lo storico arrivano dal computer. Le azioni fatte sul telefono tornano al computer con la sincronizzazione.
+La prima schermata dell'app è l'**Assistente**: il riepilogo della giornata, l'impegno in corso con l'avanzamento (o il prossimo), i suggerimenti con le loro azioni e, in basso, il tasto **Nuovo evento** con il modulo completo, più ✎ per scrivere una frase e 🎙 per dettarla con il microfono della tastiera. Le regole girano anche sul telefono, sui dati appena sincronizzati; il piano scritto dall'IA, ciò che è stato trovato nella posta e lo storico arrivano dal computer. Le azioni fatte sul telefono tornano al computer con la sincronizzazione.
+
+Il tasto 💬 apre **Chiedi**: scrivi o detta (🎙 usa il riconoscimento vocale di Android) cose come “cosa ho domani?”, “quando sono libero giovedì?”, “sposta la palestra a giovedì alle 19”, “trovami 2 ore per studiare idraulica entro venerdì”, “ho fatto gli esercizi”, “cancella la ripetizione di sabato” o una frase da aggiungere. Questi comandi funzionano anche senza rete, con *Annulla* dove serve. Le domande libere (“secondo te riesco a preparare l'esame?”) le passa all'IA del computer quando sei nella stessa rete.
 
 | Oggi | Modifica |
 |---|---|
@@ -248,7 +258,8 @@ quick.js       creazione da una frase (finestra rapida, widget, telefono)
 travel.js      tempo di viaggio (Nominatim, routing OSM)
 mobile.js      server per il telefono e abbinamento con QR
 phonesync.js   sincronizzazione con l'app Android (rete e cloud cifrato)
-agent.js       assistente proattivo: letture periodiche, piano IA, notifiche, azioni
+agent.js       assistente proattivo: letture periodiche, piano IA, notifiche, azioni, domande dal telefono
+mail.js        lettura della posta (Gmail): inviti e, con l'IA, impegni e scadenze
 log.js         registro degli errori e diagnostica
 mobile-app/    app Android (Capacitor) con dati locali, notifiche e sincronizzazione
 updater.js     aggiornamenti dalle release di GitHub (AppImage e .deb)
@@ -260,6 +271,7 @@ src/nlp.js     interpretazione delle frasi in italiano (condiviso)
 src/recur.js   ripetizioni (condiviso)
 src/syncmodel.js modello di sincronizzazione (condiviso con l'app Android)
 src/agentrules.js cosa nota l'assistente e cosa propone (condiviso con l'app Android)
+src/studyplan.js piano di studio verso un esame (condiviso)
 src/           interfaccia (HTML, CSS, JS senza framework; Leaflet in src/vendor per le mappe)
 ```
 

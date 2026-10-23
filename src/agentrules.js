@@ -83,6 +83,69 @@
       add({ id: `viaggio:${t.id}:${days}`, kind: 'viaggio', level: unb ? 'media' : 'info', title: days === 0 ? `Oggi parti per ${t.name}` : `Tra ${days} ${days === 1 ? 'giorno' : 'giorni'} parti per ${t.name}`, text: `${items.length} tappe${unb ? `, ${unb} da prenotare` : ', tutto prenotato'}.`, actions: [{ label: 'Apri l’itinerario', op: 'open-trip', args: { id: t.id } }].concat(days > 1 ? [{ label: 'Promemoria per la valigia', op: 'quick', args: { text: `preparare la valigia per ${t.name} ${days > 2 ? 'tra ' + (days - 1) + ' giorni' : 'domani'} alle 20` } }] : []) });
     }
     // 9. calendari che non si sincronizzano
+    // Calendly: gli slot fissi delle ripetizioni e gli impegni che Calendly non vede
+    const cal = (ctx.accounts || []).filter(a => a.provider === 'calendly' && a.enabled !== false);
+    if (cal.length) {
+      const calIds = new Set(cal.map(a => a.id));
+      const googleIds = new Set((ctx.accounts || []).filter(a => a.provider === 'google').map(a => a.id));
+      const isBooking = (e) => e.source && calIds.has(e.source.acc);
+      const seenByCalendly = (e) => isBooking(e) || (e.source && googleIds.has(e.source.acc)) || (e.pushTo && googleIds.has(e.pushTo.acc));
+      const all = R ? R.expand(ctx.events || [], day0, new Date(day0.getTime() + 15 * 864e5)) : (ctx.events || []);
+      const WD = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const toMs = (d, hhmm) => { const [h, m] = hhmm.split(':').map(Number); const x = new Date(d); x.setHours(h, m, 0, 0); return x.getTime(); };
+      let warned = 0;
+      for (const a of cal) for (const sc of ((a.slots && a.slots.schedules) || [])) {
+        for (let i = 0; i < 14 && warned < 3; i++) {
+          const d = new Date(day0); d.setDate(d.getDate() + i);
+          const k = dk(d), over = sc.rules.find(r => r.type === 'date' && r.date === k);
+          const ints = over ? over.intervals : ((sc.rules.find(r => r.type === 'wday' && r.wday === WD[d.getDay()]) || {}).intervals || []);
+          for (const it of ints) {
+            const s = toMs(d, it.from), en = toMs(d, it.to); if (en <= now.getTime()) continue;
+            for (const e of all) {
+              if (e.allDay || !e.start || seenByCalendly(e) || e.tripRef) continue;
+              const es = P(e.start).getTime(), ee = P(e.end || e.start).getTime();
+              if (es < en && ee > s && ee > now.getTime()) {
+                const id = `slot:${e.id}:${e.start}`;
+                if (out.some(x => x.id === id)) continue;
+                add({ id, kind: 'slot', level: i <= 2 ? 'alta' : 'media', title: `“${e.title}” cade in uno slot di ripetizione`, text: `${GIORNI[d.getDay()]} ${d.getDate()}: ${hm(e.start)}–${hm(e.end || e.start)}, mentre su Calendly sei disponibile ${it.from}–${it.to}. Calendly non vede questo impegno: uno studente potrebbe prenotare proprio lì.`,
+                  actions: [{ label: 'Chiudi lo slot su Calendly', op: 'open-url', args: { url: 'https://calendly.com/app/availability/schedules' } }, { label: 'Apri l’impegno', op: 'open-ev', args: { id: e.id, date: k } }] });
+                warned++;
+              }
+            }
+          }
+        }
+      }
+      // prima e dopo una lezione: cosa avevate fatto, com'è andata
+      const who = (e) => e.who || (e.source && e.source.extra && e.source.extra.list && e.source.extra.list[0]) || null;
+      const skey = (w) => w ? String(w.email || w.name || '').toLowerCase() : '';
+      const notes = ctx.students || {};
+      const lessons = all.filter(isBooking).sort((x, y) => x.start.localeCompare(y.start));
+      for (const e of lessons) {
+        const w = who(e), st = notes[skey(w)], es = P(e.start), ee = P(e.end || e.start);
+        const name = (w && w.name) || e.title;
+        const past = Object.entries((st && st.notes) || {}).filter(([, n]) => n.at < e.start).sort((x, y) => y[1].at.localeCompare(x[1].at));
+        if (es > now && es - now < 3 * 3600e3) {
+          const qa = w && w.qa && w.qa.find(x => x && !/^(nome|name|email)/i.test(x));
+          add({ id: `lez:${e.id}:${e.start}`, kind: 'lezione', level: 'info', title: `Alle ${hm(e.start)} lezione con ${name}`, text: past.length ? `L’ultima volta (${new Date(past[0][1].at).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}): ${past[0][1].text}` : qa ? `Prima lezione insieme. Ha scritto: ${qa}` : 'Prima lezione insieme.', actions: [{ label: 'Apri la scheda', op: 'open-ev', args: { id: e.id, date: dk(es) } }] });
+        }
+        if (ee <= now && now - ee < 6 * 3600e3 && !(st && st.notes && st.notes[e.id])) {
+          add({ id: `dopo:${e.id}`, kind: 'lezione', level: 'info', title: `Com’è andata la lezione con ${name}?`, text: 'Due righe su cosa avete fatto e cosa resta da fare: te le ripropongo alla prossima lezione.', actions: [{ label: 'Scrivi gli appunti', op: 'open-ev', args: { id: e.id, date: dk(es) } }] });
+        }
+      }
+    }
+    // piani di studio: sei in linea con l'esame?
+    for (const p of (ctx.projects || [])) {
+      const s = p.study; if (!s || p.status === 'archiviato') continue;
+      const exam = P(s.exam), left = Math.round((new Date(exam).setHours(0, 0, 0, 0) - day0) / 864e5);
+      if (left < 0) continue;
+      const work = p.steps.filter(x => x.study && !x.review && !x.final);
+      const tot = work.reduce((a, x) => a + (+x.duration || 0), 0) || 1, done = work.filter(x => x.done).reduce((a, x) => a + (+x.duration || 0), 0) / tot;
+      const span = Math.max(864e5, (exam - P(p.createdAt)) - (s.finalDays || 0) * 864e5), expd = Math.max(0, Math.min(1, (now - P(p.createdAt)) / span));
+      const late = p.steps.filter(x => x.study && !x.done && (x.autoLate || (!x.due && !x.notBefore))).length;
+      const name = p.title.replace(/^Esame:\s*/, '');
+      if (left <= 3) add({ id: `studio:${p.id}:${left}`, kind: 'studio', level: left <= 1 ? 'media' : 'info', title: left === 0 ? `Oggi c’è l’esame di ${name}` : `Tra ${left} ${left === 1 ? 'giorno' : 'giorni'} l’esame di ${name}`, text: `${Math.round(done * 100)}% delle sessioni fatte. ${left ? 'Gli ultimi giorni sono per il ripasso: dormi bene la sera prima.' : 'In bocca al lupo!'}`, actions: [{ label: 'Apri il piano', op: 'open-project', args: { id: p.id } }] });
+      else if (late || done + 0.15 < expd) add({ id: `studio:${p.id}:${todayK}`, kind: 'studio', level: late || done + 0.3 < expd ? 'media' : 'info', title: `Sei indietro con ${name}`, text: `${Math.round(done * 100)}% fatto, a oggi dovresti essere intorno al ${Math.round(expd * 100)}%${late ? `; ${late} ${late === 1 ? 'sessione non ci sta' : 'sessioni non ci stanno'} prima della scadenza` : ''}. Mancano ${left} giorni.`, actions: [{ label: `Passa a ${String(((+s.maxDay || 120) + 30) / 60).replace('.', ',')} h al giorno`, op: 'study-more', args: { id: p.id } }, { label: 'Apri il piano', op: 'open-project', args: { id: p.id } }] });
+    }
     for (const a of (ctx.accounts || [])) if (a.error && a.enabled !== false) add({ id: `acc:${a.id}:${a.error.slice(0, 20)}`, kind: 'account', level: 'media', title: `“${a.name}” non si sincronizza`, text: a.error, actions: [{ label: 'Apri le integrazioni', op: 'open-settings', args: { pane: 'integrazioni' } }] });
 
     const order = { alta: 0, media: 1, info: 2 };

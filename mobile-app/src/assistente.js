@@ -1,8 +1,8 @@
 /* Promemo Android — la schermata dell'assistente: cosa ho notato, cosa fare adesso, e un tasto per un nuovo evento */
 'use strict';
-const AG_IC = { conflitto: '⧉', partenza: '➜', ritardo: '!', scadenza: '◎', spazio: '◷', carico: '▥', domani: '☀', viaggio: '✈', account: '↻', ia: '✦' };
+const AG_IC = { slot: '⧗', lezione: '✎', studio: '🎓', posta: '✉', conflitto: '⧉', partenza: '➜', ritardo: '!', scadenza: '◎', spazio: '◷', carico: '▥', domani: '☀', viaggio: '✈', account: '↻', ia: '✦' };
 const AG_LV = { alta: 'Importante', media: 'Da guardare', info: 'Suggerimento' };
-const AG_PHONE_OPS = ['dismiss', 'steps-today', 'steps-tomorrow', 'steps-auto', 'step-at', 'step-done', 'quick', 'open-ev', 'open-day', 'open-st', 'open-trip', 'focus'];
+const AG_PHONE_OPS = ['open-project', 'study-more', 'mail-add', 'open-url', 'dismiss', 'steps-today', 'steps-tomorrow', 'steps-auto', 'step-at', 'step-done', 'quick', 'open-ev', 'open-day', 'open-st', 'open-trip', 'focus'];
 let agAll = false;
 
 function agDismissed() { S.cfg.agDismissed = S.cfg.agDismissed || {}; return S.cfg.agDismissed; }
@@ -10,12 +10,12 @@ function agentNow() {
   const x = S.data.ext || {}, st = x.settings || {};
   let r = { summary: '', insights: [] };
   try {
-    r = PromemoAgent.analyze({ events: PM.allEvents(), projects: S.data.projects, travel: st.travel ? (x.travel || {}) : {}, trips: x.trips || [], accounts: [], planner: { start: 9, end: 19, ...(st.planner || {}) }, now: new Date(), hidden: () => false });
+    r = PromemoAgent.analyze({ events: PM.allEvents(), projects: S.data.projects, travel: st.travel ? (x.travel || {}) : {}, trips: x.trips || [], accounts: (x.accounts || []).filter(a => a.provider === 'calendly' || a.provider === 'google'), students: x.students || {}, planner: { start: 9, end: 19, ...(st.planner || {}) }, now: new Date(), hidden: () => false });
   } catch (e) { PM.plog('warn', 'assistente: ' + e.message); }
   const ag = x.agent || {};
   const dis = agDismissed();
   // i suggerimenti dell'IA arrivano dal computer; le regole girano qui, sui dati più freschi
-  const tips = (ag.tips || []).filter(t => !dis[t.id]);
+  const tips = (ag.tips || []).concat(ag.mail || []).filter(t => !dis[t.id]);
   const lv = { alta: 0, media: 1, info: 2 };
   const items = r.insights.filter(i => !dis[i.id]).map(i => ({ ...i, actions: (i.actions || []).filter(a => AG_PHONE_OPS.includes(a.op)) })).concat(tips).sort((a, b) => (lv[a.level] ?? 3) - (lv[b.level] ?? 3));
   return { summary: ag.aiSummary && ag.at && Date.now() - new Date(ag.at) < 6 * 3600e3 ? ag.aiSummary : r.summary, ai: !!(ag.aiSummary && ag.at && Date.now() - new Date(ag.at) < 6 * 3600e3), at: ag.at, items, feed: ag.feed || [] };
@@ -63,7 +63,7 @@ function viewAssistant() {
       ${a.items.length > 3 ? `<button class="link ag-more" data-agmore>${agAll ? 'Mostra meno' : `Mostra tutti (${a.items.length})`}</button>` : ''}
     </div>
     <div class="ag-dock">
-      <button class="ag-round" data-agquick aria-label="Scrivi una frase">✎</button>
+      <button class="ag-round" data-agchat aria-label="Chiedi">💬</button>
       <button class="ag-new" data-newev><span>+</span> Nuovo evento</button>
       <button class="ag-round" data-agmic aria-label="Detta">🎙</button>
     </div>
@@ -80,6 +80,20 @@ function agRun(item, a) {
   if (op === 'open-st' || op === 'focus') return openSheet('st', args.sid);
   if (op === 'open-trip') { tab = 'progetti'; return render(); }
   if (op === 'quick') { addFromText(args.text); return done('Aggiunto'); }
+  if (op === 'open-url') { window.open(args.url, '_blank'); return; }
+  if (op === 'open-project') { tab = 'progetti'; openProject = args.id; return render(); }
+  if (op === 'study-more') { const p = S.data.projects.find(x => x.id === args.id); if (p && p.study) { p.study.maxDay = Math.min(360, (+p.study.maxDay || 120) + 30); for (const s of p.steps) if (s.study && !s.done && s.auto && !(s.autoDue && s.due && s.due !== s.autoDue)) { s.due = null; delete s.autoDue; } p.updatedAt = PM.isoL(now); } return done('Il computer ripianifica le sessioni'); }
+  if (op === 'mail-add') {
+    const f = args.ev || {};
+    if (f.kind === 'scadenza') {
+      let p = S.data.projects.find(x => x.inbox && x.status !== 'archiviato');
+      if (!p) { p = { id: 'p-' + PM.uid(), title: 'Da fare', category: '', description: 'Compiti aggiunti al volo', starred: false, status: 'attivo', createdAt: PM.isoL(now), updatedAt: PM.isoL(now), steps: [], traces: [], inbox: true }; S.data.projects.push(p); }
+      p.steps.push({ id: 's-' + PM.uid(), text: f.title, due: null, auto: true, deadline: f.allDay ? f.start.slice(0, 10) + 'T18:00' : f.start, duration: 60, done: false, notes: f.note || '', reminder: null });
+      return done('Compito aggiunto: ' + f.title);
+    }
+    S.data.events.push({ id: 'e-' + PM.uid(), title: f.title, kind: 'appuntamento', projectId: '', allDay: !!f.allDay, start: f.start, end: f.end || f.start, location: f.location || '', reminder: f.allDay ? null : 30, notes: f.note || '' });
+    return done('In agenda: ' + f.title);
+  }
   if (op === 'steps-today' || op === 'steps-tomorrow') {
     let n = 0;
     for (const [pid, sid] of args.ids || []) {
@@ -139,21 +153,11 @@ function saveNewEvent(f) {
   toast(`Aggiunto: ${title} · ${cap(rel(parse(e.start)))}${allDay ? '' : ' alle ' + hm(e.start)}`);
 }
 
-// la frase veloce (anche dettata con il microfono della tastiera)
-function openQuick(mic) {
-  $('#sheet-body').innerHTML = `<form data-save="quick"><h2>${mic ? 'Detta' : 'Scrivi'}</h2>
-    <p class="muted small">${mic ? 'Tocca il microfono della tastiera e di’ cosa aggiungere, es. “dentista martedì alle 9” o “studiare cap. 4 entro venerdì”.' : 'Una frase basta: capisco data, ora, luogo, ripetizione e scadenza.'}</p>
-    <label class="col"><textarea name="text" rows="3" placeholder="Es. riunione con Laura giovedì alle 15 in ufficio" enterkeyhint="done"></textarea></label>
-    <p class="muted small" id="q-hint"></p>
-    <div class="btns"><button type="button" class="btn" data-close>Annulla</button><span class="grow"></span><button class="btn primary">Aggiungi</button></div></form>`;
-  $('#sheet').hidden = false; requestAnimationFrame(() => { $('#sheet').classList.add('open'); setTimeout(() => $('#sheet [name=text]').focus(), 230); });
-}
-
 document.addEventListener('click', (e) => {
   const t = e.target;
   if (t.closest('[data-newev]')) { e.stopImmediatePropagation(); return openNewEvent(tab === 'agenda' ? { date: selDay } : {}); }
-  if (t.closest('[data-agquick]')) { e.stopImmediatePropagation(); return openQuick(false); }
-  if (t.closest('[data-agmic]')) { e.stopImmediatePropagation(); return openQuick(true); }
+  if (t.closest('[data-agchat]')) { e.stopImmediatePropagation(); return openChat(false); }
+  if (t.closest('[data-agmic]')) { e.stopImmediatePropagation(); return openChat(true); }
   if (t.closest('[data-agfeed]')) { e.stopImmediatePropagation(); return agFeedSheet(); }
   if (t.closest('[data-agmore]')) { e.stopImmediatePropagation(); agAll = !agAll; return render(); }
   if (t.closest('[data-agreset]')) { e.stopImmediatePropagation(); S.cfg.agDismissed = {}; kvSave(); closeSheet(); render(); return toast('Rivedrai anche quelli ignorati'); }
@@ -165,12 +169,5 @@ document.addEventListener('click', (e) => {
 document.addEventListener('submit', (e) => {
   const f = e.target;
   if (f.dataset.save === 'new-ev') { e.preventDefault(); e.stopImmediatePropagation(); saveNewEvent(f); }
-  if (f.dataset.save === 'quick') { e.preventDefault(); e.stopImmediatePropagation(); const v = f.querySelector('textarea').value.trim(); if (v) { addFromText(v); closeSheet(); } }
 }, true);
-document.addEventListener('input', (e) => {
-  if (!e.target.closest('form[data-save="quick"] textarea')) return;
-  const v = e.target.value.trim(), h = $('#q-hint'); if (!h) return;
-  if (!v) { h.textContent = ''; return; }
-  const r = PromemoNLP.parse(v, { projects: S.data.projects }); h.textContent = [r.title, ...PromemoNLP.describe(r).map(x => x[1])].join(' · ');
-});
 document.addEventListener('change', (e) => { const f = e.target.closest('form[data-save="new-ev"]'); if (f && e.target.name === 'allDay') { for (const n of ['start', 'end']) { const i = f.querySelector(`[name=${n}]`); const v = i.value; i.type = e.target.checked ? 'date' : 'datetime-local'; i.value = e.target.checked ? v.slice(0, 10) : v.length === 10 ? v + (n === 'start' ? 'T09:00' : 'T10:00') : v; } } });

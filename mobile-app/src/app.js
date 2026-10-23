@@ -130,7 +130,7 @@ function openSheet(kind, id, occ) {
       const lv = leaveOf(e);
       html = `<h2>${esc(e.title)}</h2><p class="muted">${cap(rel(parse(e.start)))}${e.allDay ? '' : ` · ${hm(e.start)}–${hm(e.end)}`}</p>
         ${e.location ? `<div class="row"><span>Luogo</span><b>${esc(e.location)}</b></div>` : ''}${lv ? `<div class="row"><span>Esci alle</span><b>${lv.leaveAt.slice(11, 16)} · ${lv.min} min da ${esc(lv.from)}</b></div>` : ''}
-        <div class="row"><span>Calendario</span><b>${esc(PM.groupName(e))}</b></div>${e.notes ? `<p class="notes">${esc(e.notes)}</p>` : ''}
+        <div class="row"><span>Calendario</span><b>${esc(PM.groupName(e))}</b></div>${studentPh(e)}${e.notes ? `<p class="notes">${esc(e.notes)}</p>` : ''}
         <p class="muted small">Arriva dai calendari collegati al computer: si modifica lì o nel servizio originale.</p><div class="btns"><span class="grow"></span><button type="button" class="btn" data-close>Chiudi</button></div>`;
     } else {
       const v = (s) => (s || '').slice(0, e.allDay ? 10 : 16);
@@ -148,6 +148,13 @@ function openSheet(kind, id, occ) {
   }
   $('#sheet-body').innerHTML = html;
   $('#sheet').hidden = false; requestAnimationFrame(() => $('#sheet').classList.add('open'));
+}
+// lezioni di Calendly: con chi, e gli ultimi appunti (scritti sul computer)
+function studentPh(e) {
+  const w = e.who; if (!w) return '';
+  const st = ((S.data.ext && S.data.ext.students) || {})[String(w.email || w.name || '').toLowerCase()];
+  const last = st ? Object.values(st.notes || {}).filter(n => n.at < e.start).sort((a, b) => b.at.localeCompare(a.at))[0] : null;
+  return `<div class="row"><span>Con</span><b>${esc(w.name || w.email)}</b></div>${last ? `<div class="notes"><small class="muted">Ultima lezione (${new Date(last.at).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })})</small><br>${esc(last.text)}</div>` : ''}`;
 }
 function closeSheet() { $('#sheet').classList.remove('open'); setTimeout(() => { $('#sheet').hidden = true; }, 220); }
 function saveSheet(f) {

@@ -11,6 +11,7 @@ const NAPI = process.env.PROMEMO_NOTION_API || 'https://api.notion.com';
 const NVER = '2022-06-28';
 const CAPI = process.env.PROMEMO_CALENDLY_API || 'https://api.calendly.com';
 const GSCOPE = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events';
+const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 
 const pad = (n) => String(n).padStart(2, '0');
 const localISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -82,8 +83,8 @@ function createSync(ctx) {
     return j;
   }
 
-  async function googleConnect({ clientId, clientSecret }) {
-    if (!clientId) throw new Error('Inserisci il Client ID.');
+  // accesso OAuth (PKCE, redirect su 127.0.0.1): restituisce i token
+  async function googleAuth(clientId, clientSecret, scope) {
     const verifier = b64url(crypto.randomBytes(32));
     const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
     const state = b64url(crypto.randomBytes(16));
@@ -101,7 +102,7 @@ function createSync(ctx) {
         clearTimeout(timer); server.close();
         ok ? resolve(u.searchParams.get('code')) : reject(new Error(u.searchParams.get('error') === 'access_denied' ? 'Accesso negato.' : 'Risposta di Google non valida.'));
       });
-      const url = `${GAUTH}?` + new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: 'code', scope: GSCOPE, code_challenge: challenge, code_challenge_method: 'S256', access_type: 'offline', prompt: 'consent', state });
+      const url = `${GAUTH}?` + new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: 'code', scope, code_challenge: challenge, code_challenge_method: 'S256', access_type: 'offline', prompt: 'consent', state });
       ctx.openExternal(url);
     });
     const res = await fetch(GTOKEN, {
@@ -110,9 +111,16 @@ function createSync(ctx) {
     });
     const j = await readJson(res);
     if (!res.ok) throw new Error(`Google: ${j?.error_description || j?.error || res.status}`);
+    return j;
+  }
+
+  async function googleConnect({ clientId, clientSecret, mail }) {
+    if (!clientId) throw new Error('Inserisci il Client ID.');
+    const j = await googleAuth(clientId, clientSecret, GSCOPE + (mail ? ' ' + GMAIL_SCOPE : ''));
     const id = 'acc-' + uid();
     ctx.setSecret(id, { client_id: clientId, client_secret: clientSecret, refresh_token: j.refresh_token, access_token: j.access_token, expiry: Date.now() + (j.expires_in || 3600) * 1000 });
     const acc = { id, provider: 'google', name: 'Google', enabled: true, defaultReminder: 15, calendars: [] };
+    if (mail && String(j.scope || '').includes(GMAIL_SCOPE)) acc.mail = { enabled: true };
     try {
       await refreshGoogleCalendars(acc);
     } catch (e) { ctx.removeSecret(id); throw e; }
@@ -120,6 +128,21 @@ function createSync(ctx) {
     syncAll();
     return acc;
   }
+
+  // aggiunge (o toglie) la lettura della posta a un account Google già collegato
+  async function googleGrantMail(accId) {
+    const d = ctx.data(), acc = d.accounts.find(a => a.id === accId && a.provider === 'google');
+    if (!acc) throw new Error('Account Google non trovato');
+    const s = ctx.secret(acc.id) || {};
+    if (!s.client_id) throw new Error('Credenziali dell’account mancanti: ricollegalo.');
+    const j = await googleAuth(s.client_id, s.client_secret, GSCOPE + ' ' + GMAIL_SCOPE);
+    if (!String(j.scope || '').includes(GMAIL_SCOPE)) throw new Error('Google non ha concesso la lettura della posta: abilita la Gmail API e il permesso gmail.readonly nel tuo progetto.');
+    ctx.setSecret(acc.id, { ...s, refresh_token: j.refresh_token || s.refresh_token, access_token: j.access_token, expiry: Date.now() + (j.expires_in || 3600) * 1000 });
+    acc.mail = { ...(acc.mail || {}), enabled: true, grantedAt: new Date().toISOString() };
+    ctx.commit();
+    return acc;
+  }
+  async function gFetchAcc(accId, path) { const acc = ctx.data().accounts.find(a => a.id === accId); if (!acc) throw new Error('Account non trovato'); return gFetch(acc, path); }
 
   async function refreshGoogleCalendars(acc) {
     const j = await gFetch(acc, '/calendar/v3/users/me/calendarList?maxResults=250');
@@ -377,6 +400,11 @@ function createSync(ctx) {
     async pull(acc) {
       const token = ctx.secret(acc.id)?.token;
       const { from, to } = windowRange();
+      // gli slot fissi (orari di disponibilità): servono all'assistente per accorgersi degli impegni che Calendly non vede
+      try {
+        const av = await cFetch(token, '/user_availability_schedules?' + new URLSearchParams({ user: acc.user }));
+        acc.slots = { at: new Date().toISOString(), schedules: (av.collection || []).map(s => ({ name: s.name, default: !!s.default, timezone: s.timezone, rules: (s.rules || []).map(r => ({ type: r.type, wday: r.wday, date: r.date, intervals: (r.intervals || []).map(i => ({ from: i.from, to: i.to })) })) })) };
+      } catch (e) { acc.slots = { ...(acc.slots || {}), error: e.message }; }
       const known = new Map(ctx.data().events.filter(e => e.source && e.source.acc === acc.id && e.source.extra).map(e => [e.source.rid, e.source.extra]));
       const items = [];
       let url = '/scheduled_events?' + new URLSearchParams({ user: acc.user, min_start_time: from.toISOString(), max_start_time: to.toISOString(), status: 'active', count: '100', sort: 'start_time:asc' });
@@ -574,7 +602,7 @@ function createSync(ctx) {
     return { data: incoming, needsPush: !!needsPush };
   }
 
-  return { syncAll, googleConnect, notionInspect, notionConnect, icsConnect, disconnect, reconcile, refreshGoogleCalendars, calendlyConnect, notionProps, setNotionColorProp, ensureGroup };
+  return { syncAll, googleConnect, googleGrantMail, gFetchAcc, notionInspect, notionConnect, icsConnect, disconnect, reconcile, refreshGoogleCalendars, calendlyConnect, notionProps, setNotionColorProp, ensureGroup };
 }
 
 module.exports = { createSync, coreHash };

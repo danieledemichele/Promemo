@@ -11,6 +11,7 @@ const { createTravel } = require('./travel');
 const { createMobile } = require('./mobile');
 const { createPhoneSync } = require('./phonesync');
 const { createAgent } = require('./agent');
+const { createMail } = require('./mail');
 const SyncModel = require('./src/syncmodel.js');
 const path = require('path');
 const fs = require('fs');
@@ -343,6 +344,7 @@ ipcMain.handle('data:set', (_e, d) => {
 // ---------- Account collegati ----------
 const wrap = (fn) => async (_e, arg) => { if (!data) return { ok: false, error: 'Promemo è bloccata' }; try { return { ok: true, value: await fn(arg) }; } catch (e) { return { ok: false, error: e.cause ? `Rete non raggiungibile: ${e.cause.code || e.message}` : e.message }; } };
 ipcMain.handle('acc:google', wrap((a) => sync.googleConnect(a)));
+ipcMain.handle('acc:google-mail', wrap(async ({ id, on }) => { if (on === false) { const a = data.accounts.find(x => x.id === id); if (a && a.mail) a.mail.enabled = false; commit(); return a; } const a = await sync.googleGrantMail(id); agentSoon(1500, 'posta'); return a; }));
 ipcMain.handle('acc:notion-inspect', wrap((a) => sync.notionInspect(a)));
 ipcMain.handle('acc:notion', wrap((a) => sync.notionConnect(a)));
 ipcMain.handle('acc:ics', wrap((a) => sync.icsConnect(a)));
@@ -712,8 +714,9 @@ ipcMain.handle('shortcut:state', () => ({ exec: process.env.APPIMAGE || (app.isP
 ipcMain.handle('main:show', (_e, route) => { showWindow(); if (route && win) win.webContents.send('navigate', route); });
 
 // ---------- Assistente proattivo ----------
+const mail = createMail({ data: () => data, log, gFetch: (id, p) => sync.gFetchAcc(id, p), ai: (system, messages, opts) => { const c = (data && data.settings.ai) || {}; if (!c.provider || c.provider === 'none') return null; return aiLib.chat(c, loadSecrets()['ai:' + c.provider], system, messages, opts); } });
 const agent = createAgent({
-  data: () => data, commit, notify, log, quickAdd: (t) => quickAdd(t),
+  data: () => data, commit, notify, log, mail, push: () => schedulePush(), quickAdd: (t) => quickAdd(t),
   ai: async (system, messages, opts) => { const c = (data && data.settings.ai) || {}; if (!c.provider || c.provider === 'none') return null; return aiLib.chat(c, loadSecrets()['ai:' + c.provider], system, messages, opts); },
 });
 let agentTimer = null;
@@ -728,7 +731,7 @@ const psSoon = (ms = 30000) => { clearTimeout(psTimer); psTimer = setTimeout(() 
 ipcMain.handle('psync:status', () => { const c = phoneSync.cfg(); const b = (data && data.settings.backup) || {}; return { ...c, seen: undefined, dest: b.dest ? (b.dest.type || b.dest) : null, hasPass: !!backup.pass() }; });
 ipcMain.handle('psync:set', (_e, patch) => { if (!data) return null; data.settings.phoneSync = { ...phoneSync.cfg(), ...patch }; phoneSync.dev(); commit(); if (patch.enabled) psSoon(500); return phoneSync.cfg(); });
 ipcMain.handle('psync:now', wrap(() => phoneSync.cloudRun('manuale')));
-const mobile = createMobile({ data: () => data, commit, quickAdd: (t, o) => quickAdd(t, o), root: __dirname,
+const mobile = createMobile({ data: () => data, commit, quickAdd: (t, o) => quickAdd(t, o), agentChat: (t, h) => agent.chat(t, h), root: __dirname,
   sync: { state: () => phoneSync.state(), merge: (st) => { const n = phoneSync.mergeIn(st, 'rete'); spawnRepeats(data) && commit(); return n; }, config: () => phoneSync.cloudConfigForPhone(), enabled: () => phoneSync.cfg().enabled }, onChange: () => { if (win) win.webContents.send('mobile-status', mobile.status()); } });
 ipcMain.handle('mobile:status', () => mobile.status());
 ipcMain.handle('mobile:set', (_e, patch) => {

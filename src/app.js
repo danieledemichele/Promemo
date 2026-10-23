@@ -896,6 +896,7 @@ function viewAccounts() {
           <div class="row"><span class="tiny grow">Gruppi e colori${a.provider === 'notion' ? (a.config.colorProp ? ` · da colonna “${esc(a.config.colorProp)}”` : '') : a.provider === 'google' ? ' · uno per calendario' : a.provider === 'calendly' ? ' · uno per tipo di appuntamento' : ' · dalle categorie del calendario'}</span>${a.provider === 'notion' ? `<button class="link" data-action="notion-color" data-id="${a.id}">${a.config.colorProp ? 'Cambia colonna' : 'Colora per colonna'}</button>` : ''}</div>
           <div class="grp-chips">${(a.groups || []).map(g => `<button class="pill grp-chip" data-action="grp-color" data-type="acc" data-acc="${a.id}" data-gid="${esc(g.id)}"><i style="background:${esc(g.color)}"></i>${esc(g.name || a.name)}</button>`).join('')}</div>
         </div>
+        ${a.provider === 'google' ? `<label class="row acc-foot"><span class="muted grow">Leggi la posta: l'assistente cerca appuntamenti, inviti e scadenze nelle email degli ultimi giorni (sola lettura)${a.mail && a.mail.error ? ` · <span style="color:#e0352b">${esc(a.mail.error)}</span>` : ''}</span><input type="checkbox" class="switch" data-acc-mail="${a.id}" ${a.mail && a.mail.enabled ? 'checked' : ''}></label>` : ''}
         ${a.provider === 'calendly' ? `<label class="row acc-foot"><span class="muted grow">Nascondi le copie che Calendly scrive in Google o negli altri calendari</span><input type="checkbox" class="switch" data-acc-dedupe="${a.id}" ${a.config?.dedupe !== false ? 'checked' : ''}></label>` : ''}
         <div class="row acc-foot">
           <span class="muted grow">Promemoria predefinito per gli eventi importati</span>
@@ -930,10 +931,12 @@ function modalGoogle() {
       <li>In <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com">API e servizi → Libreria</a> abilita <b>Google Calendar API</b>.</li>
       <li>In <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/auth/overview">Google Auth Platform</a> configura l'app come <b>Esterna</b>, poi in <i>Pubblico</i> premi <b>Pubblica app</b> (in modalità “test” Google scollega l'account ogni 7 giorni). Al primo accesso vedrai “app non verificata”: è la tua, scegli <i>Avanzate → Vai a Promemo</i>.</li>
       <li>In <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/auth/clients">Client</a> → <b>Crea client</b> → tipo <b>App desktop</b>. Copia ID client e client secret qui sotto.</li>
+      <li><i>Facoltativo, per far leggere la posta all'assistente:</i> abilita anche la <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/apis/library/gmail.googleapis.com">Gmail API</a> e in <a href="#" data-action="open-url" data-url="https://console.cloud.google.com/auth/scopes">Accesso ai dati</a> aggiungi il permesso <code>gmail.readonly</code>.</li>
     </ol>
     <form class="form" data-submit="connect-google">
       <label class="field"><span>ID client</span><input name="clientId" required placeholder="123456-abc.apps.googleusercontent.com" spellcheck="false"></label>
       <label class="field"><span>Client secret</span><input name="clientSecret" type="password" placeholder="GOCSPX-…" spellcheck="false"></label>
+      <label class="switch-row" style="border:0;padding:4px 0"><div>Leggi anche la posta<small>Sola lettura: l'assistente trova inviti, appuntamenti e scadenze nelle email. Si può attivare anche dopo.</small></div><input type="checkbox" class="switch" name="mail"></label>
       <div class="form-err" hidden></div>
       <div class="modal-actions"><button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">Accedi con Google</button></div>
     </form>`);
@@ -1820,7 +1823,7 @@ const submits = {
   },
   'connect-google': async (f, fd) => {
     showErr(f); setBusy(f, true, 'Completa l’accesso nel browser…');
-    const r = await api.google({ clientId: fd.get('clientId').trim(), clientSecret: fd.get('clientSecret').trim() });
+    const r = await api.google({ clientId: fd.get('clientId').trim(), clientSecret: fd.get('clientSecret').trim(), mail: !!fd.get('mail') });
     setBusy(f, false);
     if (!r.ok) return showErr(f, r.error);
     closeModal(); go('account'); toast('Google Calendar collegato');
@@ -1972,6 +1975,14 @@ document.addEventListener('submit', (e) => {
 });
 document.addEventListener('change', async (e) => {
   const t = e.target;
+  if (t.dataset.accMail) {
+    const on = t.checked; t.disabled = true;
+    if (on) toast('Completa l’accesso nel browser: Google chiederà il permesso di leggere la posta');
+    const r = await api.googleMail({ id: t.dataset.accMail, on });
+    t.disabled = false;
+    if (!r.ok) { t.checked = false; toast(r.error); } else toast(on ? 'L’assistente leggerà la posta' : 'Lettura della posta disattivata');
+    return;
+  }
   if (t.dataset.accDedupe) { await api.updateAccount({ id: t.dataset.accDedupe, patch: { dedupe: t.checked } }); return; }
   if (t.dataset.accToggle) { await api.updateAccount({ id: t.dataset.accToggle, patch: { enabled: t.checked } }); return; }
   if (t.dataset.calToggle) { await api.updateAccount({ id: t.dataset.calToggle, patch: { calendars: [{ id: t.dataset.cal, enabled: t.checked }] } }); return; }

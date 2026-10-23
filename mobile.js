@@ -103,6 +103,10 @@ function createMobile(ctx) {
           const n = j.state ? ctx.sync.merge(j.state) : 0;
           return send(200, { ok: true, merged: n, state: ctx.sync.state() });
         }
+        if (u.pathname === '/api/agent/chat') {
+          if (!ctx.agentChat) return send(404, { error: 'non disponibile' });
+          return Promise.resolve(ctx.agentChat(String(j.text || ''), Array.isArray(j.history) ? j.history : [])).then(t => t ? send(200, { ok: true, text: t }) : send(409, { error: 'Sul computer non è configurato un motore IA' })).catch(e => send(502, { error: e.message }));
+        }
         if (u.pathname === '/api/add') { const r = ctx.quickAdd(String(j.text || ''), { pid: j.pid }); return send(200, { ok: true, title: r.title, text: r.text }); }
         if (u.pathname === '/api/step') {
           const p = ctx.data().projects.find(x => x.id === j.pid); const st = p && p.steps.find(x => x.id === j.id);
