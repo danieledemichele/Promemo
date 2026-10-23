@@ -134,3 +134,19 @@ body.ag-mode #refresh { background: rgba(255,255,255,.55); box-shadow: none; }
 .ag-feed.lv-alta b { color: #e0352b; }
 .day-head { display: flex; align-items: center; justify-content: space-between; } .day-head h3 { margin-right: auto; } .day-head .link { margin: 12px 4px 0; font-size: 14px; }
 body.ag-mode { padding-bottom: calc(160px + env(safe-area-inset-bottom)); }
+/* ---------- Chiedi ---------- */
+.chat { display: flex; flex-direction: column; height: 78vh; }
+.chat h2 { margin-bottom: 4px; }
+.chat-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 6px 2px 10px; }
+.cb { align-self: flex-start; max-width: 86%; background: var(--card); border-radius: 18px 18px 18px 6px; padding: 10px 14px; font-size: 15px; line-height: 1.4; }
+.cb.me { align-self: flex-end; background: var(--accent); color: #fff; border-radius: 18px 18px 6px 18px; }
+.cb.wait { color: var(--text-3); letter-spacing: 3px; }
+.cb small { display: block; margin-top: 4px; font-size: 11px; color: var(--text-3); }
+.cb-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; } .cb-acts .btn { height: 34px; border-radius: 17px; font-size: 13.5px; }
+.chat-sugg { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px; scrollbar-width: none; }
+.pill { flex: none; border: 1px solid var(--line); background: var(--card); border-radius: 16px; padding: 7px 12px; font-size: 13px; white-space: nowrap; }
+.chat-in { display: flex; gap: 8px; align-items: center; background: var(--card); border-radius: 26px; padding: 5px; }
+.chat-in input { flex: 1; border: 0; background: transparent; outline: 0; padding: 0 10px; height: 44px; min-width: 0; }
+.chat-in .mic { width: 44px; height: 44px; background: var(--fill); font-size: 18px; }
+.chat-in .mic.on { background: #e0352b; animation: agBlink 1s infinite; } @keyframes agBlink { 50% { opacity: .6; } }
+.chat-in .send { width: 44px; height: 44px; border-radius: 22px; border: 0; background: var(--accent); color: #fff; font-size: 20px; font-weight: 700; }

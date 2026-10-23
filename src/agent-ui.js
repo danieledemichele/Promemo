@@ -5,7 +5,7 @@ const agentState = () => (data && data.agent) || {};
 const agentCfg = () => ({ enabled: true, every: 2, ai: true, notify: true, quietFrom: 22, quietTo: 7, maxNotif: 6, ...(data.settings.agent || {}) });
 let agentOpenAll = false;
 const AG_LEVEL = { alta: 'Importante', media: 'Da guardare', info: 'Suggerimento' };
-const AG_KIND_IC = { conflitto: 'i-calendar', partenza: 'i-route', ritardo: 'i-bell', scadenza: 'i-target', spazio: 'i-clock', carico: 'i-chart', domani: 'i-sunrise', viaggio: 'c-plane', account: 'i-sync', ia: 'i-spark' };
+const AG_KIND_IC = { conflitto: 'i-calendar', partenza: 'i-route', ritardo: 'i-bell', scadenza: 'i-target', spazio: 'i-clock', carico: 'i-chart', domani: 'i-sunrise', viaggio: 'c-plane', account: 'i-sync', ia: 'i-spark', posta: 'i-send', studio: 'c-cap', slot: 'i-calendar', lezione: 'c-book' };
 
 function agentAgo(isoS) {
   if (!isoS) return '';
@@ -78,6 +78,8 @@ async function agentRunOp(item, a) {
   if (op === 'open-st') { const [, s] = findStep(args.pid, args.sid); return s ? modalStep(args.pid, s) : null; }
   if (op === 'open-trip') { ui.trip = args.id; ui.tripMode = 'percorso'; return go('viaggi', { trip: args.id }); }
   if (op === 'open-settings') return modalSettings(args.pane);
+  if (op === 'open-url') return api.openUrl(args.url);
+  if (op === 'open-project') return go('progetti', { projectId: args.id, projFilter: 'attivi', catFilter: null });
   if (op === 'focus') { const [, s] = findStep(args.pid, args.sid); if (typeof focusStart === 'function') focusStart({ pid: args.pid, sid: args.sid, label: s ? s.text : '' }); return; }
   await agentFlush();
   try { const msg = await api.agentAct({ op, args, id: item.id }); toast(msg || 'Fatto'); }
@@ -129,12 +131,13 @@ paneHTML = function (id, ls) {
       <label class="switch-row"><div>Attivo<small>${a.at ? `Ultima lettura ${agentAgo(a.at)}` : 'Non ha ancora letto niente'}</small></div><input type="checkbox" class="switch" data-ag="enabled" ${c.enabled ? 'checked' : ''}></label>
       ${srow('Rileggi ogni', 'Rilegge anche dopo ogni sincronizzazione e quando cambi qualcosa', `<select class="set-select" data-ag="every">${[[1, '1 ora'], [2, '2 ore'], [3, '3 ore'], [4, '4 ore'], [6, '6 ore'], [12, '12 ore']].map(([v, l]) => `<option value="${v}" ${+c.every === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
       <label class="switch-row"><div>Piano scritto dall’IA<small>${aiOn ? 'Riassume la giornata e propone fino a 3 idee in più' : 'Serve un motore nella scheda Assistente'}</small></div><input type="checkbox" class="switch" data-ag="ai" ${c.ai && aiOn ? 'checked' : ''} ${aiOn ? '' : 'disabled'}></label>
+      <label class="switch-row"><div>Leggi la posta<small>${(data.accounts || []).some(a => a.provider === 'google' && a.mail && a.mail.enabled) ? 'Inviti, appuntamenti e scadenze dalle email di Gmail' : 'Attivala sull’account Google in Account collegati'}</small></div><input type="checkbox" class="switch" data-ag="mail" ${c.mail !== false ? 'checked' : ''}></label>
       <label class="switch-row"><div>Avvisami per le cose importanti<small>Sovrapposizioni, partenze imminenti, scadenze</small></div><input type="checkbox" class="switch" data-ag="notify" ${c.notify ? 'checked' : ''}></label>
       ${srow('Silenzio', 'Nessun avviso in queste ore', `<select class="set-select" data-ag="quietFrom">${hours.map(h => `<option value="${h}" ${+c.quietFrom === h ? 'selected' : ''}>dalle ${pad(h)}:00</option>`).join('')}</select><select class="set-select" data-ag="quietTo">${hours.map(h => `<option value="${h}" ${+c.quietTo === h ? 'selected' : ''}>alle ${pad(h)}:00</option>`).join('')}</select>`)}
       ${srow('Avvisi al giorno', '', `<select class="set-select" data-ag="maxNotif">${[2, 4, 6, 10].map(v => `<option value="${v}" ${+c.maxNotif === v ? 'selected' : ''}>al massimo ${v}</option>`).join('')}</select>`)}
       ${srow('Adesso', '', '<button class="btn small" data-agset="run">Rileggi adesso</button><button class="btn small" data-agset="feed">Cosa ho notato</button><button class="btn small" data-agset="reset">Mostra di nuovo gli ignorati</button>')}
     </div>
-    <p class="set-note">Tutta l’analisi avviene su questo computer. Al motore IA arrivano solo gli impegni di oggi e domani e i compiti aperti, e solo se il piano scritto dall’IA è attivo.</p>`;
+    <p class="set-note">Tutta l’analisi avviene su questo computer. Al motore IA arrivano gli impegni dei prossimi giorni e i compiti aperti (solo se il piano scritto dall’IA è attivo) e, se la lettura della posta è attiva, mittente, oggetto e testo delle email recenti senza inviti di calendario. Con Ollama non esce niente dal computer.</p>`;
 };
 const _drawPane_ag = drawPane;
 drawPane = function (m) {

@@ -4,7 +4,7 @@ name: Android (prova)
 on:
   push:
     branches: [main]
-    paths: ['mobile-app/**', 'src/nlp.js', 'src/recur.js', 'src/syncmodel.js']
+    paths: ['mobile-app/**', 'src/nlp.js', 'src/recur.js', 'src/syncmodel.js', 'src/agentrules.js']
   workflow_dispatch:
 
 jobs:

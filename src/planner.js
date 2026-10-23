@@ -35,19 +35,32 @@ function planAuto() {
   const buf = (c.buffer || 0) * 60000;
   const busy = planBusy();
   const overlaps = (s, e) => busy.some(([a, b]) => s < b + buf && e + buf > a);
-  // le finestre di lavoro dei prossimi giorni
-  const windows = [];
-  for (let i = 0; i <= c.horizon; i++) {
-    const d = startOfDay(addDays(now, i));
-    if (!c.days.includes(d.getDay())) continue;
-    const ranges = c.lunch && c.start < 13 && c.end > 14 ? [[c.start, 13], [14, c.end]] : [[c.start, c.end]];
-    for (const [h1, h2] of ranges) { const a = new Date(d); a.setHours(h1, 0, 0, 0); const b = new Date(d); b.setHours(h2, 0, 0, 0); if (b.getTime() > t0) windows.push([Math.max(a.getTime(), t0), b.getTime()]); }
-  }
-  const findSlot = (dur, until, from = 0) => {
-    for (const [a, b] of windows) {
+  // le finestre di lavoro dei prossimi giorni (i piani di studio hanno orari, giorni e orizzonte propri)
+  const winCache = {};
+  const windowsFor = (w) => {
+    const k = JSON.stringify([w.start, w.end, w.days, w.lunch, w.horizon]);
+    if (winCache[k]) return winCache[k];
+    const out = [];
+    for (let i = 0; i <= w.horizon; i++) {
+      const d = startOfDay(addDays(now, i));
+      if (!w.days.includes(d.getDay())) continue;
+      const ranges = w.lunch && w.start < 13 && w.end > 14 ? [[w.start, 13], [14, w.end]] : [[w.start, w.end]];
+      for (const [h1, h2] of ranges) { const a = new Date(d); a.setHours(h1, 0, 0, 0); const b = new Date(d); b.setHours(h2, 0, 0, 0); if (b.getTime() > t0) out.push([Math.max(a.getTime(), t0), b.getTime()]); }
+    }
+    return (winCache[k] = out);
+  };
+  const windows = windowsFor(c);
+  const studyWin = (p) => p.study ? windowsFor({ start: +p.study.start || 15, end: +p.study.end || 20, days: p.study.days || [1, 2, 3, 4, 5, 6], lunch: false, horizon: Math.min(150, Math.max(c.horizon, Math.ceil((parse(p.study.exam) - now) / 864e5) + 1)) }) : windows;
+  // al massimo N minuti al giorno per progetto di studio
+  const used = {};
+  const dayK = (ms) => dayKey(new Date(ms));
+  const capOk = (p, s, dur) => !p.study || !p.study.maxDay || dur <= 30 * 60000 || (used[p.id + '|' + dayK(s)] || 0) + dur / 60000 <= p.study.maxDay; // i ripassi brevi non contano
+  const use = (p, s, dur) => { if (p.study && dur > 30 * 60000) { const k = p.id + '|' + dayK(s); used[k] = (used[k] || 0) + dur / 60000; } };
+  const findSlot = (dur, until, from = 0, p = null) => {
+    for (const [a, b] of p ? studyWin(p) : windows) {
       if (until && a >= until) break;
       if (b <= from) continue;
-      for (let s = Math.max(a, Math.ceil(from / 9e5) * 9e5); s + dur <= b; s += 15 * 60000) if (!overlaps(s, s + dur)) return s;
+      for (let s = Math.max(a, Math.ceil(from / 9e5) * 9e5); s + dur <= b; s += 15 * 60000) if (!overlaps(s, s + dur) && (!p || capOk(p, s, dur))) return s;
     }
     return null;
   };
@@ -57,8 +70,8 @@ function planAuto() {
     const st = t.st, dur = (+st.duration || 60) * 60000;
     const cur = st.due ? parse(st.due).getTime() : null;
     // resta dov'è se: spostato a mano, già iniziato, oppure ancora libero e prima della scadenza
-    if (cur && (pinnedStep(st) || (cur <= now.getTime() && cur + dur > now.getTime()))) { busy.push([cur, cur + dur]); keep.push(t); continue; }
-    if (cur && st.autoDue === st.due && cur > now.getTime() && (!st.notBefore || cur >= parse(st.notBefore).getTime()) && !overlaps(cur, cur + dur) && (!st.deadline || cur + dur <= parse(st.deadline).getTime())) { busy.push([cur, cur + dur]); keep.push(t); continue; }
+    if (cur && (pinnedStep(st) || (cur <= now.getTime() && cur + dur > now.getTime()))) { busy.push([cur, cur + dur]); use(t.p, cur, dur); keep.push(t); continue; }
+    if (cur && st.autoDue === st.due && cur > now.getTime() && (!st.notBefore || cur >= parse(st.notBefore).getTime()) && !overlaps(cur, cur + dur) && (!st.deadline || cur + dur <= parse(st.deadline).getTime()) && capOk(t.p, cur, dur)) { busy.push([cur, cur + dur]); use(t.p, cur, dur); keep.push(t); continue; }
     place.push(t);
   }
   place.sort((a, b) => (a.st.deadline || '9999').localeCompare(b.st.deadline || '9999') || (PRIO_W[a.st.priority || ''] - PRIO_W[b.st.priority || '']) || (+b.st.duration || 60) - (+a.st.duration || 60));
@@ -67,14 +80,16 @@ function planAuto() {
     const until = st.deadline ? parse(st.deadline).getTime() - dur + 1 : null;
     const from = st.notBefore ? parse(st.notBefore).getTime() : 0;
     if (st.notBefore && from <= now.getTime()) delete st.notBefore;
-    let s = findSlot(dur, until, from), late = false;
-    if (s == null) { s = findSlot(dur, null, from); late = s != null && !!st.deadline; }
+    const sp = p.study ? p : null;
+    let s = findSlot(dur, until, from, sp), late = false;
+    // in ritardo sì, ma mai dopo l'esame
+    if (s == null) { s = findSlot(dur, sp ? parse(p.study.exam).getTime() - dur + 1 : null, from, sp); late = s != null && !!st.deadline; }
     const nd = s == null ? null : iso(new Date(s));
     if (nd !== st.due || late !== !!st.autoLate) {
       st.due = nd; st.autoDue = nd; if (late) st.autoLate = true; else delete st.autoLate;
       delete st.notifiedAt; touch(p); changed++;
     }
-    if (s != null) busy.push([s, s + dur]);
+    if (s != null) { busy.push([s, s + dur]); use(p, s, dur); }
   }
   return changed;
 }

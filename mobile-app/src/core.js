@@ -227,6 +227,15 @@ async function doNotifs() {
 }
 
 // tutti gli eventi visibili: i miei e quelli in sola lettura arrivati dal computer
+// domanda libera all'IA del computer (solo in rete locale)
+async function askDesktop(text, history) {
+  if (!S.cfg.host || !S.cfg.key) throw new Error('Telefono non abbinato al computer');
+  const r = await req(`http://${S.cfg.host}/api/agent/chat`, { method: 'POST', headers: { 'X-Promemo-Key': S.cfg.key, 'content-type': 'application/json' }, body: JSON.stringify({ text, history }) }, 60000);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Il computer non ha risposto');
+  return j.text;
+}
+const speech = () => P('SpeechRecognition');
 function allEvents() {
   const ext = (S.data.ext && S.data.ext.events) || [];
   const hidden = new Set((S.data.ext && S.data.ext.settings && S.data.ext.settings.hiddenLocal) || []);
@@ -263,5 +272,5 @@ function spawnRepeats() {
   }
 }
 
-window.PM = { S, native, kv, store, plog, LOG, loadAll, persist, syncNow, scheduleSync, pairFromUrl, allEvents, colorOf, groupName, spawnRepeats, uid, isoL, APP, LN, sealState, openState, b64 };
+window.PM = { askDesktop, speech, S, native, kv, store, plog, LOG, loadAll, persist, syncNow, scheduleSync, pairFromUrl, allEvents, colorOf, groupName, spawnRepeats, uid, isoL, APP, LN, sealState, openState, b64 };
 })();
