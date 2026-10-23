@@ -84,7 +84,7 @@
     }
     // 9. calendari che non si sincronizzano
     // Calendly: gli slot fissi delle ripetizioni e gli impegni che Calendly non vede
-    const cal = (ctx.accounts || []).filter(a => a.provider === 'calendly' && a.enabled !== false);
+    const cal = (ctx.accounts || []).filter(a => (a.provider === 'calendly' || a.provider === 'calcom') && a.enabled !== false);
     if (cal.length) {
       const calIds = new Set(cal.map(a => a.id));
       const googleIds = new Set((ctx.accounts || []).filter(a => a.provider === 'google').map(a => a.id));

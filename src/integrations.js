@@ -5,8 +5,13 @@ const INT_PROV = [
   ['google', 'Google Calendar', 'Calendari Gmail e Workspace, in entrambe le direzioni', 'add-google'],
   ['notion', 'Notion', 'Ogni database con una data diventa un calendario: lezioni, allenamenti, scadenze…', 'add-notion'],
   ['calendly', 'Calendly', 'Prenotazioni con nome, email e risposte di chi prenota', 'add-calendly'],
-  ['ics', 'Calendari web (.ics)', 'Università, festività, calendari condivisi: solo lettura', 'add-ics'],
+  ['outlook', 'Outlook e Microsoft 365', 'Outlook.com, Hotmail, account di lavoro e della scuola, nei due sensi', 'add-outlook'],
+  ['caldav', 'iCloud e CalDAV', 'iCloud, Nextcloud, Fastmail, Yahoo, Zoho, mailbox.org, Posteo, Synology…', 'add-account-page'],
+  ['calcom', 'Cal.com', 'Prenotazioni di Cal.com, con partecipanti e risposte', 'add-calcom'],
+  ['todoist', 'Todoist', 'Compiti e progetti, nei due sensi', 'add-todoist'],
+  ['ics', 'Calendari web (.ics)', 'Università, festività, Proton, Airbnb e Booking: solo lettura', 'add-ics'],
 ];
+Object.assign(actions, { 'add-account-page': () => { closeModal(); go('account'); setTimeout(() => { const el = document.querySelector('.prov-sec'); el && el.scrollIntoView({ behavior: 'smooth' }); }, 120); } });
 function intAccRow(a) {
   const n = data.events.filter(e => e.source && e.source.acc === a.id).length;
   const sub = a.error ? `<span style="color:#e0352b">${esc(a.error)}</span>` : `${n} eventi${a.lastSync ? ' · aggiornato ' + esc(stamp(a.lastSync).toLowerCase()) : ''}${a.enabled ? '' : ' · in pausa'}`;

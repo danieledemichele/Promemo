@@ -2,7 +2,7 @@
 'use strict';
 const lessonWho = (e) => (e && e.source && e.source.extra && e.source.extra.list && e.source.extra.list[0]) || null;
 const studentKey = (w) => w ? String(w.email || w.name || '').toLowerCase() : '';
-const isLesson = (e) => { const a = e && e.source && data.accounts.find(x => x.id === e.source.acc); return !!(a && a.provider === 'calendly'); };
+const isLesson = (e) => { const a = e && e.source && data.accounts.find(x => x.id === e.source.acc); return !!(a && (a.provider === 'calendly' || a.provider === 'calcom')); };
 function studentLessons(key) {
   return PromemoRecur.expand(data.events.filter(e => isLesson(e) && studentKey(lessonWho(e)) === key), addDays(new Date(), -400), addDays(new Date(), 120)).sort((a, b) => a.start.localeCompare(b.start));
 }

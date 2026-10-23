@@ -194,6 +194,7 @@ const sync = createSync({
   removeSecret: (id) => { delete loadSecrets()[id]; saveSecrets(); },
   openExternal: (url) => process.env.PROMEMO_TEST_AUTH ? fetch(url).catch(() => {}) : shell.openExternal(url),
   status: (st) => { if (win) win.webContents.send('sync-status', st); },
+  log,
 });
 let pushTimer = null;
 const schedulePush = () => { clearTimeout(pushTimer); pushTimer = setTimeout(() => sync.syncAll(), 2500); };
@@ -349,7 +350,12 @@ ipcMain.handle('acc:notion-inspect', wrap((a) => sync.notionInspect(a)));
 ipcMain.handle('acc:notion', wrap((a) => sync.notionConnect(a)));
 ipcMain.handle('acc:ics', wrap((a) => sync.icsConnect(a)));
 ipcMain.handle('acc:calendly', wrap((a) => sync.calendlyConnect(a)));
+ipcMain.handle('acc:caldav', wrap((a) => sync.caldavConnect(a)));
+ipcMain.handle('acc:outlook', wrap((a) => sync.outlookConnect(a)));
+ipcMain.handle('acc:calcom', wrap((a) => sync.calcomConnect(a)));
+ipcMain.handle('acc:todoist', wrap((a) => sync.todoistConnect(a)));
 ipcMain.handle('acc:notion-props', wrap((id) => sync.notionProps(id)));
+ipcMain.handle('acc:notion-map', wrap(({ id, map }) => sync.setNotionMap(id, map)));
 ipcMain.handle('acc:notion-color', wrap(({ id, prop }) => sync.setNotionColorProp(id, prop)));
 ipcMain.handle('acc:sync', wrap(async (id) => { await sync.syncAll(id); return true; }));
 ipcMain.handle('acc:remove', wrap(({ id, removeEvents }) => sync.disconnect(id, removeEvents)));

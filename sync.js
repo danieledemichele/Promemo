@@ -3,6 +3,7 @@
 const http = require('http');
 const crypto = require('crypto');
 const { parseICS } = require('./ics');
+const { createExtraProviders } = require('./providers2');
 
 const GAPI = process.env.PROMEMO_GOOGLE_API || 'https://www.googleapis.com';
 const GAUTH = process.env.PROMEMO_GOOGLE_AUTH || 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -259,7 +260,20 @@ function createSync(ctx) {
     return acc;
   }
 
-  async function notionConnect({ token, fromAcc, databaseId, title, titleProp, dateProp, locProp, notesProp, colorProp }) {
+  // cambia le colonne usate per un database già collegato
+  async function setNotionMap(accId, m) {
+    const info = await notionProps(accId);
+    const acc = ctx.data().accounts.find(a => a.id === accId);
+    const type = (n) => (info.props.find(p => p.name === n) || {}).type || '';
+    if (m.dateProp && type(m.dateProp) !== 'date') throw new Error('La colonna della data deve essere di tipo Data');
+    Object.assign(acc.config, { titleProp: m.titleProp || acc.config.titleProp, dateProp: m.dateProp || acc.config.dateProp, locProp: m.locProp || '', notesProp: m.notesProp || '', durProp: m.durProp || '', hideProps: m.hideProps || [], checked: true });
+    acc.config.locType = type(acc.config.locProp); acc.config.notesType = type(acc.config.notesProp);
+    ctx.commit();
+    await syncAll(accId);
+    return acc;
+  }
+
+  async function notionConnect({ token, fromAcc, databaseId, title, titleProp, dateProp, locProp, notesProp, colorProp, durProp }) {
     if (!dateProp) throw new Error('Scegli la proprietà data.');
     if (!token && fromAcc) token = ctx.secret(fromAcc)?.token;
     if (!token) throw new Error('Token Notion mancante.');
@@ -269,7 +283,7 @@ function createSync(ctx) {
     ctx.setSecret(id, { token });
     const acc = { id, provider: 'notion', name: title, enabled: true, defaultReminder: null,
       calendars: [{ id: databaseId, name: title, color: '#37352f', enabled: true, writable: true }],
-      config: { titleProp, dateProp, locProp: locProp || '', notesProp: notesProp || '', colorProp: '' }, groups: [] };
+      config: { titleProp, dateProp, locProp: locProp || '', notesProp: notesProp || '', colorProp: '', ...(durProp !== undefined ? { durProp: durProp || '' } : {}) }, groups: [] };
     const d = ctx.data(); d.accounts.push(acc); ctx.commit();
     if (colorProp) await setNotionColorProp(id, colorProp);
     else { ensureGroup(acc, '', title, '#8e8e93'); syncAll(); }
@@ -296,15 +310,49 @@ function createSync(ctx) {
     if (prop.title) return plain(prop.title);
     if (prop.select) return prop.select.name || '';
     if (typeof prop.url === 'string') return prop.url;
-    if (prop.place) return prop.place.name || prop.place.address || '';
+    if (prop.place) return [prop.place.name, prop.place.address].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(' · ');
     return '';
   }
+  // qualsiasi colonna in testo leggibile (per la scheda dell'evento)
+  function nValue(prop, rel) {
+    if (!prop) return '';
+    switch (prop.type) {
+      case 'title': return plain(prop.title);
+      case 'rich_text': return plain(prop.rich_text);
+      case 'select': return prop.select ? prop.select.name : '';
+      case 'status': return prop.status ? prop.status.name : '';
+      case 'multi_select': return (prop.multi_select || []).map(o => o.name).join(', ');
+      case 'number': return prop.number == null ? '' : String(prop.number).replace('.', ',');
+      case 'checkbox': return prop.checkbox ? 'Sì' : '';
+      case 'url': return prop.url || '';
+      case 'email': return prop.email || '';
+      case 'phone_number': return prop.phone_number || '';
+      case 'place': return nText(prop);
+      case 'people': return (prop.people || []).map(p => p.name || '').filter(Boolean).join(', ');
+      case 'relation': return (prop.relation || []).map(r => rel(r.id)).filter(Boolean).join(', ');
+      case 'formula': { const f = prop.formula || {}; return f.type === 'string' ? f.string || '' : f.type === 'number' ? (f.number == null ? '' : String(f.number)) : f.type === 'boolean' ? (f.boolean ? 'Sì' : '') : f.type === 'date' && f.date ? f.date.start : ''; }
+      case 'rollup': { const r = prop.rollup || {}; if (r.type === 'number') return r.number == null ? '' : String(r.number); if (r.type === 'date') return r.date ? r.date.start : ''; return [...new Set((r.array || []).map(x => nValue(x, rel)).filter(Boolean).flatMap(x => x.split(', ')))].join(', '); }
+      case 'date': return prop.date ? prop.date.start.replace('T', ' ').slice(0, 16) : '';
+      case 'unique_id': return prop.unique_id ? `${prop.unique_id.prefix ? prop.unique_id.prefix + '-' : ''}${prop.unique_id.number}` : '';
+      default: return '';
+    }
+  }
+  // minuti da una colonna "durata" (numero, scelta, testo: "90", "1,5 h", "45 min")
+  function nMinutes(prop, name) {
+    const v = nValue(prop, () => '').split(',')[0].trim(); if (!v) return 0;
+    const n = parseFloat(v.replace(',', '.')); if (!isFinite(n) || n <= 0) return 0;
+    const hours = /\bh\b|ore|ora/i.test(v) || (/\bore\b|hours?/i.test(name) && !/min/i.test(name) && n <= 12);
+    return Math.round(hours ? n * 60 : n);
+  }
+  const LOC_NAME = /^(luogo|location|dove|aula|sede|indirizzo|posto|place|venue)$/i;
+  const DUR_NAME = /durata|ore previste|minuti|duration|\bmin\b/i;
 
   const notion = {
     async pull(acc, cal) {
       const token = ctx.secret(acc.id)?.token;
       const { from } = windowRange();
       const c = acc.config, items = [];
+      const rel = c.relNames = c.relNames || {}, needRel = new Set();
       let cursor;
       do {
         const body = { page_size: 100, filter: { property: c.dateProp, date: { on_or_after: dayStr(from) } } };
@@ -312,13 +360,43 @@ function createSync(ctx) {
         const j = await nFetch(token, `/v1/databases/${cal.id}/query`, { method: 'POST', body: JSON.stringify(body) });
         for (const p of j.results || []) {
           if (p.archived || p.in_trash) continue;
+          // colonne riconosciute dal nome la prima volta (il luogo non deve essere un'altra colonna, la durata si usa per la fine)
+          if (!c.checked) {
+            const P = p.properties, byName = (re, types) => Object.keys(P).find(k => re.test(k.trim()) && types.includes(P[k].type));
+            const loc = c.locProp && P[c.locProp];
+            if ((!c.locProp || (loc && !['place', 'rich_text'].includes(loc.type))) && byName(LOC_NAME, ['place', 'rich_text', 'select'])) c.locProp = byName(LOC_NAME, ['place', 'rich_text', 'select']);
+            if (c.durProp === undefined) c.durProp = byName(DUR_NAME, ['number', 'select', 'multi_select', 'rich_text', 'formula']) || '';
+            c.locType = c.locProp && P[c.locProp] ? P[c.locProp].type : '';
+            c.notesType = c.notesProp && P[c.notesProp] ? P[c.notesProp].type : '';
+            if (c.hideProps === undefined) c.hideProps = Object.keys(P).filter(k => ['formula', 'created_time', 'last_edited_time', 'created_by', 'last_edited_by', 'button', 'files'].includes(P[k].type));
+            c.checked = true;
+          }
           const dp = p.properties[c.dateProp];
           if (!dp || !dp.date || !dp.date.start) continue;
           const titleProp = c.titleProp && p.properties[c.titleProp] ? p.properties[c.titleProp] : Object.values(p.properties).find(x => x.type === 'title' || Array.isArray(x.title));
-          items.push({ rid: p.id, title: nText(titleProp) || '(senza titolo)', ...nDateToLocal(dp.date), location: c.locProp ? nText(p.properties[c.locProp]) : '', notes: c.notesProp ? nText(p.properties[c.notesProp]) : '', url: p.url || '', group: c.colorProp ? nGroup(p.properties[c.colorProp]) : '' });
+          const when = nDateToLocal(dp.date);
+          const mins = c.durProp && !dp.date.end && !when.allDay ? nMinutes(p.properties[c.durProp], c.durProp) : 0;
+          if (mins) when.end = localISO(new Date(parseLocal(when.start).getTime() + mins * 60000));
+          // tutte le altre colonne, per la scheda
+          const skip = new Set([c.titleProp, c.dateProp, c.locProp, c.notesProp, ...(c.hideProps || [])].filter(Boolean));
+          const props = [];
+          for (const [k, v] of Object.entries(p.properties)) {
+            if (skip.has(k) || v.type === 'title') continue;
+            if (v.type === 'relation') for (const r of v.relation || []) if (!rel[r.id]) needRel.add(r.id);
+            props.push([k, v]);
+          }
+          items.push({ rid: p.id, title: nText(titleProp) || '(senza titolo)', ...when, location: c.locProp ? nText(p.properties[c.locProp]) : '', notes: c.notesProp ? nText(p.properties[c.notesProp]) : '', url: p.url || '', group: c.colorProp ? nGroup(p.properties[c.colorProp]) : '', _props: props, extra: { durMin: mins || undefined } });
         }
         cursor = j.has_more ? j.next_cursor : null;
       } while (cursor);
+      // nomi delle pagine collegate (es. Materia), una volta sola
+      for (const id of [...needRel].slice(0, 40)) {
+        try { const pg = await nFetch(token, `/v1/pages/${id}`); const t = Object.values(pg.properties || {}).find(x => x.type === 'title'); rel[id] = (t && plain(t.title)) || '—'; } catch { rel[id] = '—'; }
+      }
+      for (const it of items) {
+        it.extra.props = it._props.map(([k, v]) => ({ n: k, v: nValue(v, (id) => rel[id] && rel[id] !== '—' ? rel[id] : '') })).filter(x => x.v);
+        delete it._props;
+      }
       return items;
     },
     props(acc, e) {
@@ -327,9 +405,14 @@ function createSync(ctx) {
       const date = e.allDay
         ? { start: dayStr(s), end: dayStr(en) !== dayStr(s) ? dayStr(en) : null }
         : { start: isoOffset(s), end: en > s ? isoOffset(en) : null };
+      // se la fine viene dalla durata, su Notion resta solo l'inizio
+      const dm = e.source && e.source.extra && e.source.extra.durMin;
+      if (!e.allDay && dm && en.getTime() - s.getTime() === dm * 60000) date.end = null;
       const props = { [c.titleProp]: { title: [{ text: { content: e.title } }] }, [c.dateProp]: { date } };
-      if (c.locProp) props[c.locProp] = { rich_text: [{ text: { content: e.location || '' } }] };
-      if (c.notesProp) props[c.notesProp] = { rich_text: [{ text: { content: (e.notes || '').slice(0, 1900) } }] };
+      // il luogo si scrive solo se la colonna è di testo (un luogo di Notion richiede le coordinate)
+      if (c.locProp && (!c.locType || c.locType === 'rich_text')) props[c.locProp] = { rich_text: [{ text: { content: e.location || '' } }] };
+      if (c.locProp && c.locType === 'select' && e.location) props[c.locProp] = { select: { name: e.location.slice(0, 100) } };
+      if (c.notesProp && (!c.notesType || c.notesType === 'rich_text')) props[c.notesProp] = { rich_text: [{ text: { content: (e.notes || '').slice(0, 1900) } }] };
       return props;
     },
     async create(acc, cal, e) {
@@ -452,7 +535,8 @@ function createSync(ctx) {
     },
   };
 
-  const providers = { google, notion, ics, calendly };
+  const extra = createExtraProviders({ ...ctx, ensureGroup, syncAll: (id) => syncAll(id), log: ctx.log || { warn: console.warn, info() {}, error: console.error } });
+  const providers = { google, notion, ics, calendly, ...extra.providers };
 
   // ---------------- Unione dei dati ----------------
   function merge(accId, calId, items) {
@@ -474,12 +558,12 @@ function createSync(ctx) {
       const grp = ensureGroup(acc, gid, gname, acc.provider === 'google' ? (acc.calendars.find(c => c.id === calId) || {}).color : null);
       if (e) {
         e.source.group = grp.id;
+        if (it.extra) e.source.extra = it.extra;
         // se l'evento ha modifiche locali non ancora inviate, non lo sovrascrivo
         if (coreHash(e) !== e.source.hash && acc.provider !== 'ics') continue;
         if (e.start !== core.start || e.allDay !== core.allDay) delete e.notifiedAt;
         Object.assign(e, core);
         e.source.hash = coreHash(e); e.source.url = it.url;
-        if (it.extra) e.source.extra = it.extra;
       } else {
         const multi = it.start.slice(0, 10) !== it.end.slice(0, 10);
         const ne = { id: 'e-' + uid(), kind: it.allDay && multi ? 'evento' : 'appuntamento', projectId: '', reminder: it.allDay ? null : (acc.defaultReminder ?? null), ...core, source: { acc: accId, cal: calId, rid: it.rid, url: it.url, rev, group: grp.id, ...(it.extra ? { extra: it.extra } : {}) } };
@@ -532,6 +616,8 @@ function createSync(ctx) {
     if (!p) return;
     await pushPending(acc);
     if (acc.provider === 'google') { try { await refreshGoogleCalendars(acc); } catch (e) { /* elenco calendari non critico */ } }
+    if (p.refresh) { try { await p.refresh(acc); } catch (e) { /* elenco calendari non critico */ } }
+    if (p.syncTasks) await p.syncTasks(acc);
     for (const cal of acc.calendars.filter(c => c.enabled)) {
       const items = await p.pull(acc, cal);
       merge(acc.id, cal.id, items);
@@ -602,7 +688,7 @@ function createSync(ctx) {
     return { data: incoming, needsPush: !!needsPush };
   }
 
-  return { syncAll, googleConnect, googleGrantMail, gFetchAcc, notionInspect, notionConnect, icsConnect, disconnect, reconcile, refreshGoogleCalendars, calendlyConnect, notionProps, setNotionColorProp, ensureGroup };
+  return { caldavConnect: extra.caldavConnect, outlookConnect: extra.outlookConnect, calcomConnect: extra.calcomConnect, todoistConnect: extra.todoistConnect, setNotionMap, syncAll, googleConnect, googleGrantMail, gFetchAcc, notionInspect, notionConnect, icsConnect, disconnect, reconcile, refreshGoogleCalendars, calendlyConnect, notionProps, setNotionColorProp, ensureGroup };
 }
 
 module.exports = { createSync, coreHash };

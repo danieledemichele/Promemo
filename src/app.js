@@ -55,11 +55,11 @@ const COLORS = ['orange', 'green', 'blue', 'purple', 'pink', 'teal', 'yellow', '
 const CAT_ICONS = ['plane', 'home', 'book', 'briefcase', 'heart', 'dumbbell', 'money', 'cap', 'folder'];
 
 const cat = (id) => data.categories.find(c => c.id === id);
-const PROV = { google: 'Google Calendar', notion: 'Notion', ics: 'Calendario web', calendly: 'Calendly' };
-const provLetter = (p) => ({ google: 'G', notion: 'N', calendly: 'C' })[p] || icon('i-calendar');
+const PROV = { google: 'Google Calendar', notion: 'Notion', ics: 'Calendario web', calendly: 'Calendly', caldav: 'CalDAV', outlook: 'Outlook', calcom: 'Cal.com', todoist: 'Todoist' };
+const provLetter = (p) => ({ google: 'G', notion: 'N', calendly: 'C', outlook: 'O', calcom: 'Cal', todoist: 'T', icloud: '☁', nextcloud: 'N', fastmail: 'F', yahoo: 'Y', zoho: 'Z', mailbox: 'M', posteo: 'P', synology: 'S', proton: 'P', airbnb: 'A' })[p] ?? icon('i-calendar');
 const accOf = (e) => { const t = e.source || e.pushTo; return t ? (data.accounts || []).find(a => a.id === t.acc) : null; };
 const calOf = (e) => { const t = e.source || e.pushTo; const a = accOf(e); return a ? a.calendars.find(c => c.id === t.cal) : null; };
-const isReadOnly = (e) => { if (e.tripRef) return true; const c = calOf(e); return !!(e.source && c && !c.writable); };
+const isReadOnly = (e) => { if (e.tripRef) return true; if (e.source && e.source.extra && e.source.extra.ro) return true; const c = calOf(e); return !!(e.source && c && !c.writable); };
 function srcPill(e) {
   const a = accOf(e); if (!a) return '';
   const c = calOf(e);
@@ -839,11 +839,11 @@ function viewReminders() {
   }).join('');
 
   return `
-  <div style="max-width:820px">
+  <div class="page-wide rem-page">
     <div class="eyebrow">Non perdere il filo</div>
     <h1 class="large-title">Promemoria</h1>
     <div class="subtitle">Riceverai una notifica sul desktop all'orario impostato, anche con la finestra chiusa (Promemo resta nell'area di notifica).</div>
-    ${body || `<div class="empty" style="margin-top:24px"><b>Nessun promemoria</b>Aggiungi un promemoria a un passo o a un appuntamento.</div>`}
+    ${body ? `<div class="rem-cols">${body}</div>` : `<div class="empty" style="margin-top:24px"><b>Nessun promemoria</b>Aggiungi un promemoria a un passo o a un appuntamento.</div>`}
   </div>`;
 }
 
@@ -859,18 +859,18 @@ function renderSyncButton() {
   b.classList.toggle('err', accs.some(a => a.error));
 }
 
-const provIcon = (a) => `<span class="prov prov-${a.provider}">${provLetter(a.provider)}</span>`;
+const provIcon = (a) => { const k = a.provider === 'caldav' && a.config && a.config.preset && a.config.preset !== 'caldav' ? a.config.preset : a.provider; return `<span class="prov prov-${k}">${provLetter(k)}</span>`; };
 
 function viewAccounts() {
   const accs = data.accounts || [];
   const count = (a) => data.events.filter(e => e.source && e.source.acc === a.id).length;
   return `
-  <div style="max-width:880px">
+  <div class="page-wide">
     <div class="eyebrow">Tutti i tuoi calendari, in un posto</div>
     <h1 class="large-title">Account collegati</h1>
     <div class="subtitle">Gli eventi arrivano in Promemo e, dove il servizio lo permette, quelli che crei o modifichi qui tornano indietro. La sincronizzazione avviene all'avvio e ogni ${data.settings.syncMinutes || 15} minuti.</div>
 
-    ${accs.length ? `<div class="stack" style="margin-top:22px">${accs.map(a => `
+    ${accs.length ? `<div class="stack acc-stack" style="margin-top:22px">${accs.map(a => `
       <div class="card acc">
         <div class="row">
           ${provIcon(a)}
@@ -893,6 +893,7 @@ function viewAccounts() {
             </label>`).join('')}
         </div>
         <div class="acc-groups">
+          ${a.provider === 'notion' ? `<div class="row acc-map"><span class="tiny grow">Colonne · luogo ${a.config.locProp ? `“${esc(a.config.locProp)}”` : 'nessuno'}${a.config.durProp ? ` · durata “${esc(a.config.durProp)}”` : ''}</span><button class="link" data-action="notion-map" data-id="${a.id}">Cambia colonne</button></div>` : ''}
           <div class="row"><span class="tiny grow">Gruppi e colori${a.provider === 'notion' ? (a.config.colorProp ? ` · da colonna “${esc(a.config.colorProp)}”` : '') : a.provider === 'google' ? ' · uno per calendario' : a.provider === 'calendly' ? ' · uno per tipo di appuntamento' : ' · dalle categorie del calendario'}</span>${a.provider === 'notion' ? `<button class="link" data-action="notion-color" data-id="${a.id}">${a.config.colorProp ? 'Cambia colonna' : 'Colora per colonna'}</button>` : ''}</div>
           <div class="grp-chips">${(a.groups || []).map(g => `<button class="pill grp-chip" data-action="grp-color" data-type="acc" data-acc="${a.id}" data-gid="${esc(g.id)}"><i style="background:${esc(g.color)}"></i>${esc(g.name || a.name)}</button>`).join('')}</div>
         </div>
@@ -905,12 +906,7 @@ function viewAccounts() {
       </div>`).join('')}</div>` : ''}
 
     <div class="section-head"><h2>${accs.length ? 'Aggiungi un altro account' : 'Collega un account'}</h2></div>
-    <div class="prov-grid">
-      <button class="card clickable prov-tile" data-action="add-google">${provIcon({ provider: 'google' })}<b>Google Calendar</b><span>Il calendario del tuo account Gmail. Lettura e scrittura.</span></button>
-      <button class="card clickable prov-tile" data-action="add-notion">${provIcon({ provider: 'notion' })}<b>Notion</b><span>Un database con una proprietà data. Lettura e scrittura.</span></button>
-      <button class="card clickable prov-tile" data-action="add-calendly">${provIcon({ provider: 'calendly' })}<b>Calendly</b><span>Le prenotazioni ricevute, con nome, email e risposte di chi prenota. Sola lettura.</span></button>
-      <button class="card clickable prov-tile" data-action="add-ics">${provIcon({ provider: 'ics' })}<b>Calendario da link</b><span>iCloud, Outlook, Nextcloud, Proton, orari universitari… (.ics, sola lettura)</span></button>
-    </div>
+    ${typeof provTilesHTML === 'function' ? provTilesHTML() : ''}
   </div>`;
 }
 
@@ -921,6 +917,38 @@ function setBusy(form, busy, label) {
   else { b.innerHTML = b.dataset.label || b.innerHTML; b.disabled = false; }
 }
 const showErr = (form, msg) => { const el = form.querySelector('.form-err'); el.textContent = msg || ''; el.hidden = !msg; };
+
+const NOTION_LOC = /^(luogo|location|dove|aula|sede|indirizzo|posto|place|venue)$/i;
+const NOTION_DUR = /durata|ore previste|minuti|duration|\bmin\b/i;
+// colonne di un database Notion già collegato
+async function modalNotionMap(accId) {
+  const a = data.accounts.find(x => x.id === accId); if (!a) return;
+  openModal(`<h2>${provIcon(a)} Colonne di “${esc(a.name)}”</h2><div class="muted">Leggo il database…</div>`);
+  const r = await api.notionProps(accId);
+  if (!r.ok) { $('#modal').innerHTML = `<h2>Colonne</h2><div class="acc-err">${esc(r.error)}</div><div class="modal-actions"><button class="btn" data-action="close-modal">Chiudi</button></div>`; return; }
+  const props = r.value.props, c = a.config;
+  const of = (types) => props.filter(p => types.includes(p.type));
+  const sel = (name, list, cur, empty) => `<select name="${name}">${empty ? `<option value="">${empty}</option>` : ''}${list.map(p => `<option value="${esc(p.name)}" ${p.name === cur ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`;
+  const mapped = new Set([c.titleProp, c.dateProp]);
+  const T = { place: 'luogo', rich_text: 'testo', select: 'scelta', multi_select: 'scelta multipla', status: 'stato', number: 'numero', relation: 'collegamento', rollup: 'rollup', formula: 'formula', people: 'persone', checkbox: 'casella', url: 'link', email: 'email', phone_number: 'telefono', date: 'data', files: 'file', created_time: 'creazione', last_edited_time: 'modifica', unique_id: 'ID' };
+  $('#modal').innerHTML = `<h2>${provIcon(a)} Colonne di “${esc(a.name)}”</h2>
+    <form class="form" data-submit="notion-map" data-id="${a.id}">
+      <div class="field-row">
+        <label class="field"><span>Titolo</span>${sel('titleProp', of(['title']), c.titleProp)}</label>
+        <label class="field"><span>Data</span>${sel('dateProp', of(['date']), c.dateProp)}</label>
+      </div>
+      <div class="field-row">
+        <label class="field"><span>Luogo</span>${sel('locProp', of(['place', 'rich_text', 'select']), c.locProp, 'Nessuno')}</label>
+        <label class="field"><span>Note</span>${sel('notesProp', of(['rich_text']), c.notesProp, 'Nessuna')}</label>
+      </div>
+      <label class="field"><span>Durata in minuti (se la data non ha una fine)</span>${sel('durProp', of(['number', 'select', 'multi_select', 'rich_text', 'formula']), c.durProp, 'Nessuna, un’ora')}</label>
+      <div class="field"><span>Da mostrare nella scheda dell'evento</span>
+        <div class="nmap-list">${props.filter(p => !mapped.has(p.name) && p.type !== 'title').map(p => `<label class="nmap-i"><input type="checkbox" name="show" value="${esc(p.name)}" ${(c.hideProps || []).includes(p.name) ? '' : 'checked'}><span>${esc(p.name)}</span><small>${T[p.type] || p.type}</small></label>`).join('')}</div></div>
+      <div class="form-err" hidden></div>
+      <div class="modal-actions"><button type="button" class="btn" data-action="close-modal">Annulla</button><button class="btn-primary">Salva e sincronizza</button></div>
+    </form>`;
+  $('#modal').dataset.allProps = JSON.stringify(props.filter(p => !mapped.has(p.name) && p.type !== 'title').map(p => p.name));
+}
 
 function modalGoogle() {
   openModal(`
@@ -1772,6 +1800,7 @@ const actions = {
   'grp-color': (el) => showColorPicker(el, currentGroupColor(el), (c) => setGroup(el, { color: c })),
   'acc-collapse': (el) => { const k = el.dataset.key; collapsed[k] = !collapsed[k]; try { localStorage.setItem('promemo.collapsed', JSON.stringify(collapsed)); } catch {} el.closest('.cal-acc').classList.toggle('collapsed', !!collapsed[k]); },
   'notion-color': (el) => modalNotionColor(el.dataset.id),
+  'notion-map': (el) => modalNotionMap(el.dataset.id),
   'open-url': (el) => api.openUrl(el.dataset.url),
   'sync-now': async () => { const r = await api.syncNow(); if (!r.ok) toast(r.error); },
   'cal-prev': () => calShift(-1),
@@ -1833,7 +1862,7 @@ const submits = {
     const map = f.querySelector('.notion-map');
     if (!map.hidden) { // secondo passaggio: collega
       setBusy(f, true, 'Collegamento…');
-      const r = await api.notion({ token: (fd.get('token') || '').trim(), fromAcc: fd.get('fromAcc') || '', databaseId: f.dataset.db, title: f.dataset.title, titleProp: fd.get('titleProp'), dateProp: fd.get('dateProp'), locProp: fd.get('locProp'), notesProp: fd.get('notesProp'), colorProp: fd.get('colorProp') });
+      const r = await api.notion({ token: (fd.get('token') || '').trim(), fromAcc: fd.get('fromAcc') || '', databaseId: f.dataset.db, title: f.dataset.title, titleProp: fd.get('titleProp'), dateProp: fd.get('dateProp'), locProp: fd.get('locProp'), notesProp: fd.get('notesProp'), colorProp: fd.get('colorProp'), durProp: fd.get('durProp') || '' });
       setBusy(f, false);
       if (!r.ok) return showErr(f, r.error);
       closeModal(); if (ui.view !== 'notion') go('account'); else render(); toast(`“${f.dataset.title}” ora è in Agenda`); return;
@@ -1846,7 +1875,7 @@ const submits = {
     const of = (types) => props.filter(p => types.includes(p.type));
     const dates = of(['date']);
     if (!dates.length) return showErr(f, `Il database “${title}” non ha proprietà di tipo Data.`);
-    const opt = (list, empty) => (empty ? `<option value="">${empty}</option>` : '') + list.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    const opt = (list, empty, pick) => { const sel = pick ? (list.find(p => pick.test(p.name.trim())) || {}).name : null; return (empty ? `<option value="">${empty}</option>` : '') + list.map(p => `<option value="${esc(p.name)}" ${p.name === sel ? 'selected' : ''}>${esc(p.name)}</option>`).join(''); };
     f.dataset.db = id; f.dataset.title = title;
     map.hidden = false;
     map.innerHTML = `
@@ -1856,13 +1885,24 @@ const submits = {
         <label class="field"><span>Data</span><select name="dateProp">${opt(dates)}</select></label>
       </div>
       <div class="field-row">
-        <label class="field"><span>Luogo</span><select name="locProp">${opt(of(['rich_text', 'select', 'place']), 'Nessuno')}</select></label>
-        <label class="field"><span>Note</span><select name="notesProp">${opt(of(['rich_text']), 'Nessuna')}</select></label>
+        <label class="field"><span>Luogo</span><select name="locProp">${opt(of(['place', 'rich_text', 'select']), 'Nessuno', NOTION_LOC)}</select></label>
+        <label class="field"><span>Note</span><select name="notesProp">${opt(of(['rich_text']), 'Nessuna', /^(note|notes|descrizione|appunti|dettagli)$/i)}</select></label>
       </div>
+      <label class="field"><span>Durata in minuti (se la data non ha una fine)</span><select name="durProp">${opt(of(['number', 'select', 'multi_select', 'rich_text', 'formula']), 'Nessuna, un’ora', NOTION_DUR)}</select></label>
+      <p class="muted small" style="margin:-4px 0 6px">Le altre colonne (argomento, materia, docente…) le trovi nella scheda dell’evento.</p>
       <label class="field"><span>Colori da (Seleziona / Stato)</span><select name="colorProp">${opt(of(['select', 'multi_select', 'status']), 'Nessuna, un solo colore')}</select></label>`;
     f.querySelectorAll('[name=token],[name=database]').forEach(i => i.readOnly = true);
     f.querySelector('[name=fromAcc]') && (f.querySelector('[name=fromAcc]').disabled = false, f.querySelector('[name=fromAcc]').style.pointerEvents = 'none');
     f.querySelector('.btn-primary').textContent = 'Collega database';
+  },
+  'notion-map': async (f, fd) => {
+    showErr(f);
+    const all = JSON.parse($('#modal').dataset.allProps || '[]'), show = new Set(fd.getAll('show'));
+    setBusy(f, true, 'Sincronizzo…');
+    const r = await api.notionMap({ id: f.dataset.id, map: { titleProp: fd.get('titleProp'), dateProp: fd.get('dateProp'), locProp: fd.get('locProp'), notesProp: fd.get('notesProp'), durProp: fd.get('durProp'), hideProps: all.filter(n => !show.has(n)) } });
+    setBusy(f, false);
+    if (!r.ok) return showErr(f, r.error);
+    closeModal(); render(); toast('Colonne aggiornate');
   },
   'connect-calendly': async (f, fd) => {
     showErr(f); setBusy(f, true, 'Verifica…');

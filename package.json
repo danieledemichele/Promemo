@@ -36,6 +36,7 @@
       "phonesync.js",
       "agent.js",
       "mail.js",
+      "providers2.js",
       "log.js",
       "src/**/*",
       "build/icon.png"
