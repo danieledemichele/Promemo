@@ -163,7 +163,7 @@ function viewTrips() {
 }
 
 function tripSetupView() {
-  return `<div style="max-width:720px">
+  return `<div class="page-wide setup-page">
     <div class="eyebrow">Itinerari dai tuoi database</div>
     <h1 class="large-title">Viaggi</h1>
     <div class="subtitle">Promemo legge da Notion i dati essenziali di ogni viaggio — destinazione, date, mezzi, tappe con orario e luogo — e l'intelligenza artificiale scrive il resto: il racconto, le sintesi dei giorni, la storia dei luoghi e come spostarsi tra una tappa e l'altra.</div>

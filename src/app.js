@@ -356,18 +356,20 @@ async function setGroup(el, patch) {
 function modalNotionColor(accId) {
   const a = data.accounts.find(x => x.id === accId);
   openModal(`<h2>${provIcon(a)} Colori per “${esc(a.name)}”</h2>
-    <p class="muted" style="margin-top:-6px">Scegli una colonna <b>Seleziona</b>, <b>Selezione multipla</b> o <b>Stato</b> del database: ogni valore diventa un gruppo con il suo colore (es. Personale in rosso, Lavoro in azzurro, Università in blu scuro). I colori di partenza sono quelli di Notion: li puoi cambiare dalla barra laterale.</p>
-    <div class="form"><div class="field"><span>Colonna</span><select id="ncol" disabled><option>Carico le colonne…</option></select></div><div id="nprev" class="nprev"></div>
+    <p class="muted" style="margin-top:-6px">Adesso tutte le voci di questo database hanno lo stesso colore. Se scegli una colonna, ogni suo valore diventa un calendario a sé nella barra laterale, con il suo colore e la sua casella per mostrarlo o nasconderlo.</p>
+    <p class="muted">Per le lezioni, per esempio, con <b>Materia</b> vedresti Matematica, Fisica e Topografia in colori diversi e potresti nascondere una materia con un clic. I colori si cambiano poi dalla barra laterale.</p>
+    <div class="form"><div class="field"><span>Colora per</span><select id="ncol" disabled><option>Carico le colonne…</option></select></div><div id="nprev" class="nprev"></div>
     <div class="form-err" hidden></div></div>
     <div class="modal-actions"><button class="btn" data-action="close-modal">Annulla</button><button class="btn-primary" id="nsave" disabled>Applica</button></div>`, async (m) => {
       const r = await api.notionProps(accId);
       const sel = m.querySelector('#ncol');
       if (!r.ok) { const e = m.querySelector('.form-err'); e.textContent = r.error; e.hidden = false; return; }
-      const props = r.value.props.filter(p => ['select', 'multi_select', 'status'].includes(p.type));
+      const props = r.value.props.filter(p => ['select', 'multi_select', 'status', 'relation', 'rollup'].includes(p.type));
       const NC = { default: '#8e8e93', gray: '#8e8e93', brown: '#a0785a', orange: '#f08a24', yellow: '#d9a50b', green: '#34a853', blue: '#0a84ff', purple: '#8e5bd9', pink: '#e0569b', red: '#e5484d' };
-      sel.innerHTML = `<option value="">Nessuna (un solo colore)</option>` + props.map(p => `<option value="${esc(p.name)}" ${a.config.colorProp === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+      const TL = { select: 'scelta', multi_select: 'scelta multipla', status: 'stato', relation: 'pagine collegate', rollup: 'rollup' };
+      sel.innerHTML = `<option value="">Nessuna: un solo colore per tutto il database</option>` + props.map(p => `<option value="${esc(p.name)}" ${a.config.colorProp === p.name ? 'selected' : ''}>${esc(p.name)} · ${TL[p.type]}</option>`).join('');
       sel.disabled = false; m.querySelector('#nsave').disabled = false;
-      const prev = () => { const p = props.find(x => x.name === sel.value); m.querySelector('#nprev').innerHTML = p ? p.options.map(o => `<span class="pill"><i style="width:8px;height:8px;border-radius:4px;background:${NC[o.color] || '#8e8e93'}"></i>${esc(o.name)}</span>`).join('') : ''; };
+      const prev = () => { const p = props.find(x => x.name === sel.value); m.querySelector('#nprev').innerHTML = !p ? '' : p.options.length ? `<div class="tiny" style="margin-bottom:6px">Diventeranno ${p.options.length} calendari:</div>` + p.options.map(o => `<span class="pill"><i style="width:8px;height:8px;border-radius:4px;background:${NC[o.color] || '#8e8e93'}"></i>${esc(o.name)}</span>`).join('') : `<div class="tiny">Un calendario per ogni ${p.type === 'relation' ? 'pagina collegata' : 'valore'} che compare nelle voci (es. ogni materia), con colori assegnati da Promemo.</div>`; };
       sel.addEventListener('change', prev); prev();
       m.querySelector('#nsave').addEventListener('click', async () => {
         const b = m.querySelector('#nsave'); b.disabled = true; b.innerHTML = '<span class="spinner"></span> Applico…';
@@ -389,7 +391,7 @@ function renderSidebar() {
     ['progetti', 'i-folder', 'Progetti', `<span class="count">${active}</span>`],
     ['agenda', 'i-calendar', 'Agenda', ''],
     ['promemoria', 'i-bell', 'Promemoria', late ? `<span class="badge">${late}</span>` : ''],
-    ...EXTRA_NAV.map(([v, ic, l, ex]) => [v, ic, l, ex ? ex() : '']),
+    ...EXTRA_NAV.filter(([v]) => !(data.settings.sideHidden || []).includes(v)).map(([v, ic, l, ex]) => [v, ic, l, ex ? ex() : '']),
     ['account', 'i-sync', 'Account collegati', (data.accounts || []).some(a => a.error) ? `<span class="badge warn">!</span>` : (data.accounts || []).length ? `<span class="count">${data.accounts.length}</span>` : ''],
   ];
   $('#nav').innerHTML = items.map(([v, ic, label, extra]) =>
@@ -1048,6 +1050,7 @@ function openPalette() {
       { t: 'Vai a Progetti', i: 'i-folder', k: 'apri', run: () => go('progetti') },
       { t: 'Vai ad Agenda', i: 'i-calendar', k: 'apri calendario', run: () => go('agenda') },
       { t: 'Vai a Promemoria', i: 'i-bell', k: 'apri', run: () => go('promemoria') },
+      ...EXTRA_NAV.map(([v, ic, l]) => ({ t: 'Vai a ' + l, i: ic, k: 'apri sezione', run: () => go(v) })),
       { t: 'Account collegati', i: 'i-sync', k: 'google notion calendly', run: () => go('account') },
       { t: 'Sincronizza ora', i: 'i-sync', k: 'aggiorna', run: () => actions['sync-now']() },
       { t: 'Impostazioni', i: 'i-gear', k: 'tema scuro chiaro', run: () => modalSettings() },

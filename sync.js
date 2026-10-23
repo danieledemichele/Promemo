@@ -297,11 +297,13 @@ function createSync(ctx) {
     const e = date.end ? new Date(date.end) : new Date(s.getTime() + 3600000);
     return { allDay, start: localISO(s), end: localISO(e) };
   }
-  function nGroup(prop) {
+  function nGroup(prop, rel) {
     if (!prop) return '';
     if (prop.select) return prop.select.name || '';
     if (prop.status) return prop.status.name || '';
     if (Array.isArray(prop.multi_select)) return prop.multi_select[0]?.name || '';
+    if (Array.isArray(prop.relation)) { const id = prop.relation[0] && prop.relation[0].id; return id ? (rel && rel[id] && rel[id] !== '—' ? rel[id] : '…' + id) : ''; }
+    if (prop.type === 'rollup') return (nValue(prop, () => '').split(', ')[0] || '');
     return '';
   }
   function nText(prop) {
@@ -383,9 +385,10 @@ function createSync(ctx) {
           for (const [k, v] of Object.entries(p.properties)) {
             if (skip.has(k) || v.type === 'title') continue;
             if (v.type === 'relation') for (const r of v.relation || []) if (!rel[r.id]) needRel.add(r.id);
+          if (k === c.colorProp && v.type === 'relation') for (const r of v.relation || []) if (!rel[r.id]) needRel.add(r.id);
             props.push([k, v]);
           }
-          items.push({ rid: p.id, title: nText(titleProp) || '(senza titolo)', ...when, location: c.locProp ? nText(p.properties[c.locProp]) : '', notes: c.notesProp ? nText(p.properties[c.notesProp]) : '', url: p.url || '', group: c.colorProp ? nGroup(p.properties[c.colorProp]) : '', _props: props, extra: { durMin: mins || undefined } });
+          items.push({ rid: p.id, title: nText(titleProp) || '(senza titolo)', ...when, location: c.locProp ? nText(p.properties[c.locProp]) : '', notes: c.notesProp ? nText(p.properties[c.notesProp]) : '', url: p.url || '', group: c.colorProp ? nGroup(p.properties[c.colorProp], rel) : '', _props: props, _colorRel: c.colorProp && p.properties[c.colorProp] && p.properties[c.colorProp].type === 'relation', extra: { durMin: mins || undefined } });
         }
         cursor = j.has_more ? j.next_cursor : null;
       } while (cursor);
@@ -394,6 +397,8 @@ function createSync(ctx) {
         try { const pg = await nFetch(token, `/v1/pages/${id}`); const t = Object.values(pg.properties || {}).find(x => x.type === 'title'); rel[id] = (t && plain(t.title)) || '—'; } catch { rel[id] = '—'; }
       }
       for (const it of items) {
+        if (it._colorRel && it.group && it.group.startsWith('…')) { const id = it.group.slice(1); it.group = rel[id] && rel[id] !== '—' ? rel[id] : ''; }
+        delete it._colorRel;
         it.extra.props = it._props.map(([k, v]) => ({ n: k, v: nValue(v, (id) => rel[id] && rel[id] !== '—' ? rel[id] : '') })).filter(x => x.v);
         delete it._props;
       }

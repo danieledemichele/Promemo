@@ -81,15 +81,28 @@ function createUpdater({ app, send, onLog = () => {} }) {
         return { ...pub(), restarting: true };
       }
       if (mode === 'deb' && u.deb) {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'promemo-agg-'));
-        const file = path.join(dir, u.deb.name.replace(/[^\w.-]/g, '_'));
-        await download(u.deb, file);
-        state.progress = null; state.phase = 'install'; emit();
-        await new Promise((res, rej) => execFile('pkexec', ['/usr/bin/apt-get', 'install', '-y', '--allow-downgrades', file], { timeout: 10 * 60000 }, (err, _o, se) => {
+        // il pacchetto scaricato resta lì: se l'installazione non va, si riprova senza riscaricarlo
+        let file = state.file && state.file.version === u.version && fs.existsSync(state.file.path) && fs.statSync(state.file.path).size === (u.deb.size || fs.statSync(state.file.path).size) ? state.file.path : null;
+        if (!file) {
+          const dir = path.join(os.tmpdir(), 'promemo-aggiornamenti'); fs.mkdirSync(dir, { recursive: true });
+          file = path.join(dir, u.deb.name.replace(/[^\w.-]/g, '_'));
+          await download(u.deb, file);
+          state.file = { path: file, version: u.version };
+        }
+        state.progress = null; state.phase = 'install'; state.detail = ''; emit();
+        // una sola richiesta di password: sistemo un'eventuale installazione rimasta a metà, poi installo
+        const script = 'export DEBIAN_FRONTEND=noninteractive; dpkg --configure -a >/dev/null 2>&1; apt-get install -y --allow-downgrades "$1" 2>&1 || { dpkg -i "$1" 2>&1; apt-get install -f -y 2>&1; dpkg -s promemo 2>/dev/null | grep -q "install ok installed"; }';
+        await new Promise((res, rej) => execFile('pkexec', ['/bin/sh', '-c', script, 'promemo-agg', file], { timeout: 10 * 60000, maxBuffer: 4 * 1024 * 1024 }, (err, so, se) => {
+          const out = `${so || ''}\n${se || ''}`.trim();
           if (!err) return res();
-          if (err.code === 126 || err.code === 127) return rej(new Error('Installazione annullata.'));
-          rej(new Error((se || err.message).toString().trim().split('\n').pop() || 'Installazione non riuscita'));
+          state.detail = out.split('\n').slice(-30).join('\n');
+          onLog(`installazione .deb non riuscita (codice ${err.code}):\n${out.slice(-4000)}`, true);
+          if (err.code === 126 || err.code === 127) return rej(new Error('Password non corretta o finestra della password chiusa: premi Riprova.'));
+          if (/lock|bloccat|risorsa temporaneamente non disponibile/i.test(out)) return rej(new Error('Un altro programma sta installando pacchetti (es. Aggiornamenti software): attendi che finisca e premi Riprova.'));
+          const line = out.split('\n').find(l => /^dpkg: (error|errore)|errore nell'elaborazione|error processing|unmet dependencies|dipendenze non soddisfatte/i.test(l));
+          rej(new Error(line ? `Installazione non riuscita: ${line.replace(/^dpkg:\s*/, '')}` : 'Installazione non riuscita: apri i dettagli o installa dal terminale con il comando qui sotto.'));
         }));
+        state.file = null;
         app.relaunch(); setTimeout(() => app.exit(0), 300);
         return { ...pub(), restarting: true };
       }
@@ -102,7 +115,10 @@ function createUpdater({ app, send, onLog = () => {} }) {
     } finally { state.installing = false; state.phase = null; if (!state.error) state.progress = null; emit(); }
   }
 
-  return { check, install, state: pub };
+  // dopo un errore: si torna allo stato normale (il pacchetto scaricato resta per riprovare)
+  function reset() { if (!state.installing) { state.error = ''; state.detail = ''; state.progress = null; state.phase = null; emit(); } return pub(); }
+  function reveal() { if (state.file && fs.existsSync(state.file.path)) require('electron').shell.showItemInFolder(state.file.path); return pub(); }
+  return { check, install, reset, reveal, state: pub };
 }
 
 module.exports = { createUpdater, newer };

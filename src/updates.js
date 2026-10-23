@@ -47,12 +47,13 @@ function updPopHTML() {
   return `<div class="menu upd-pop">
     <div class="upd-head"><span class="upd-badge">${icon('i-spark')}</span><div class="grow"><b>Promemo ${esc(a.version)} è disponibile</b><small>Hai la ${esc(upd.current)}${a.date ? ' · pubblicata ' + esc(relDay(new Date(a.date)).toLowerCase()) : ''}</small></div></div>
     <div class="upd-notes">${updMd(a.notes)}</div>
-    ${upd.error ? `<div class="form-err">${esc(upd.error)}</div>` : ''}
+    ${upd.error ? `<div class="form-err">${esc(upd.error)}</div>
+      ${upd.mode === 'deb' && upd.file ? `<div class="upd-fix"><span>Oppure dal terminale:</span><code>sudo apt install ${esc(upd.file.path)}</code><div class="row" style="gap:6px;margin-top:6px"><button class="btn small" data-upd="copy">Copia il comando</button><button class="btn small" data-upd="reveal">Apri la cartella</button>${upd.detail ? '<button class="link" data-upd="detail">Dettagli</button>' : ''}</div>${upd.detail ? `<pre class="upd-detail" hidden>${esc(upd.detail)}</pre>` : ''}</div>` : ''}` : ''}
     ${prog || `<p class="upd-how">${how}</p>`}
     <div class="upd-actions">
       <button class="link" data-upd="skip">Salta questa versione</button><span class="grow"></span>
       <button class="btn small" data-upd="later">Più tardi</button>
-      <button class="btn-primary small" data-upd="install" ${upd.installing ? 'disabled' : ''}>${esc(updActionLabel())}</button>
+      <button class="btn-primary small" data-upd="install" ${upd.installing ? 'disabled' : ''}>${upd.error && !upd.installing ? 'Riprova' : esc(updActionLabel())}</button>
     </div>
   </div>`;
 }
@@ -69,7 +70,10 @@ function openUpdPop() {
   m.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-upd]'); if (!b) return;
     const k = b.dataset.upd;
-    if (k === 'later') { updQuiet = true; renderUpdButton(); close(); toast('Te lo ricordo al prossimo avvio'); }
+    if (k === 'later') { updQuiet = true; if (upd.error) upd = await api.updReset(); renderUpdButton(); close(); toast('Te lo ricordo al prossimo avvio'); }
+    if (k === 'copy') { try { await navigator.clipboard.writeText(`sudo apt install ${upd.file.path}`); toast('Comando copiato: incollalo nel terminale'); } catch { toast('Copia non riuscita'); } return; }
+    if (k === 'reveal') { api.updReveal(); return; }
+    if (k === 'detail') { const p = m.querySelector('.upd-detail'); if (p) p.hidden = !p.hidden; return; }
     if (k === 'skip') { data.settings.update = { ...updCfg(), skip: upd.available.version }; save(); close(); renderUpdButton(); toast(`Versione ${upd.available.version} saltata`); }
     if (k === 'install') { const r2 = await api.updInstall(); upd = r2; if (r2.restarting) toast('Riavvio Promemo…'); refreshUpdPop(); }
   });

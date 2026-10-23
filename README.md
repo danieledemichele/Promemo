@@ -216,6 +216,11 @@ Anteprima dal vivo e a schermo intero. Si possono scegliere:
 
 Queste preferenze sono salvate in chiaro in `promemo.lockscreen.json`, perché servono prima dello sblocco.
 
+## Calendari annidati nella barra laterale
+Trascina una voce dei calendari (o un intero account, come un database di Notion) sopra un'altra voce, per esempio *Lezioni 26/27* dentro *Lavoro*: la voce che contiene altre voci prende una freccia per aprirle e chiuderle, e la sua casella mostra o nasconde tutto quello che contiene. Per toglierla, passa sopra la voce e premi ↰, oppure trascinala su *Su questo computer*. Funziona con qualsiasi voce e su più livelli.
+
+In *Impostazioni → Generale* puoi togliere dalla barra laterale Viaggi, Database Notion e Statistiche (restano raggiungibili con Ctrl+K).
+
 ## Calendari e colori
 Nella barra laterale, sotto **Calendari**, ogni account mostra i suoi gruppi con un colore:
 - **Su questo computer**: *Personale* e una voce per ogni raccolta (Viaggi, Casa, Studio…).

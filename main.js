@@ -796,6 +796,8 @@ ipcMain.handle('travel:refresh', wrap(async () => { if (data) { data.travel = {}
 // ---------- Aggiornamenti ----------
 const updater = createUpdater({ app, send: (ch, v) => { if (win && !win.isDestroyed()) win.webContents.send(ch, v); }, onLog: (m, bad) => log[bad ? 'warn' : 'info']('aggiornamenti', m) });
 ipcMain.handle('upd:state', () => updater.state());
+ipcMain.handle('upd:reset', () => updater.reset());
+ipcMain.handle('upd:reveal', () => updater.reveal());
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('upd:check', () => updater.check());
 ipcMain.handle('upd:install', () => updater.install());

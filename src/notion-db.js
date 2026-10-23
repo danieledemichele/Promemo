@@ -122,7 +122,7 @@ function ndbRender() {
 
 function viewNotionDb() {
   if (!ndb.accs) { ndbInit(); return `<div class="empty" style="margin-top:40px"><span class="spinner"></span> Carico i database Notion…</div>`; }
-  if (!ndb.accs.length) return `<div style="max-width:700px"><div class="eyebrow">I tuoi dati, senza aprire il browser</div><h1 class="large-title">Database Notion</h1>
+  if (!ndb.accs.length) return `<div class="page-wide setup-page"><div class="eyebrow">I tuoi dati, senza aprire il browser</div><h1 class="large-title">Database Notion</h1>
     <div class="empty" style="margin-top:22px"><b>Nessun account Notion collegato</b>Collega Notion in <a class="link" data-action="nav" data-view="account">Account collegati</a>, poi condividi con l'integrazione le pagine o i database da gestire.</div></div>`;
   const dq = ndb.dq.toLowerCase();
   const dbs = (ndb.dbs || []).filter(d => !dq || d.title.toLowerCase().includes(dq));

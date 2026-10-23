@@ -103,6 +103,8 @@ contextBridge.exposeInMainWorld('promemo', {
   updState: () => ipcRenderer.invoke('upd:state'),
   updCheck: () => ipcRenderer.invoke('upd:check'),
   updInstall: () => ipcRenderer.invoke('upd:install'),
+  updReset: () => ipcRenderer.invoke('upd:reset'),
+  updReveal: () => ipcRenderer.invoke('upd:reveal'),
   onUpdate: (cb) => ipcRenderer.on('update-state', (_e, s) => cb(s)),
   appVersion: () => ipcRenderer.invoke('app:version'),
   mapTiles: () => ipcRenderer.invoke('map:tiles'),
