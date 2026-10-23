@@ -30,8 +30,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then exit 0; fi
           NOTES="docs/note/$TAG.md"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # rilancio a mano: il tag segue l'ultimo commit e le note si aggiornano
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              git tag -f "$TAG" "${{ github.sha }}" && git push -f origin "refs/tags/$TAG"
+              [ -f "$NOTES" ] && gh release edit "$TAG" --notes-file "$NOTES" --title "Promemo ${TAG#v}"
+            fi
+            exit 0
+          fi
           if [ -f "$NOTES" ]; then gh release create "$TAG" --target "${{ github.sha }}" --title "Promemo ${TAG#v}" --notes-file "$NOTES"
           else gh release create "$TAG" --target "${{ github.sha }}" --title "Promemo ${TAG#v}" --generate-notes; fi
 

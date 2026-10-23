@@ -130,7 +130,7 @@ Il controllo automatico si spegne in *Impostazioni → Aggiornamenti*. Perché f
 ## Integrazioni
 ![Integrazioni](docs/integrazioni.png)
 
-*Impostazioni → Integrazioni* raccoglie tutti i servizi collegati: Google Calendar, Notion (anche più database), Calendly e calendari web con stato, ultima sincronizzazione, pausa e sincronizzazione manuale per ogni account; Viaggi e Database Notion; assistente IA, meteo, backup nel cloud e aggiornamenti; frequenza della sincronizzazione (da 5 a 60 minuti, senza riavviare).
+*Impostazioni → Integrazioni* raccoglie tutti i servizi collegati: Google Calendar, Outlook e Microsoft 365, iCloud e i server CalDAV, Notion (anche più database), Todoist, Calendly, Cal.com e calendari web con stato, ultima sincronizzazione, pausa e sincronizzazione manuale per ogni account; Viaggi e Database Notion; assistente IA, meteo, backup nel cloud e aggiornamenti; frequenza della sincronizzazione (da 5 a 60 minuti, senza riavviare).
 
 ## Viaggi
 Promemo legge da Notion i dati essenziali di ogni viaggio e l'intelligenza artificiale scrive il resto.
@@ -145,12 +145,23 @@ Promemo legge da Notion i dati essenziali di ogni viaggio e l'intelligenza artif
 - **In Agenda**: il viaggio compare come evento di più giorni e ogni tappa con orario come appuntamento nel gruppo *Viaggi da Notion* (colore e visibilità dalla barra laterale). Un clic su una tappa apre l'itinerario in quel punto.
 - I viaggi si aggiornano con la sincronizzazione periodica o con *Aggiorna da Notion*.
 
+## Servizi collegabili
+![Servizi](docs/servizi.png)
+
+In *Account collegati → Aggiungi un altro account*:
+- **Calendari, nei due sensi**: Google Calendar; **Outlook e Microsoft 365** (Outlook.com, Hotmail, account di lavoro e della scuola: serve un ID applicazione gratuito da Microsoft Entra, le istruzioni sono nella finestra); **iCloud**, **Nextcloud**, **Fastmail**, **Yahoo**, **Zoho**, **mailbox.org**, **Posteo**, **Synology** e qualsiasi server **CalDAV** (Radicale, Baïkal, SOGo…), con utente e password per app. Gli eventi che si ripetono, creati in quei servizi, sono in sola lettura e si modificano lì.
+- **Prenotazioni**: Calendly e **Cal.com** (sola lettura, con i partecipanti e la scheda dello studente).
+- **Compiti e database**: Notion e **Todoist** (ogni progetto di Todoist diventa un progetto di Promemo; nuovi compiti, fatti, date e priorità nei due sensi).
+- **Da un link .ics** (sola lettura): calendari pubblici, **Proton Calendar**, **Airbnb, Booking e Vrbo**, orari universitari e scolastici.
+
 ## Database Notion
 ![Database Notion](docs/database-notion.png)
 
 Tutti i database condivisi con l'integrazione (lezioni, allenamenti, scadenze, letture…), in tabella: titolo, testo, numeri, selezione, stato, selezione multipla, caselle, date, link, email e telefono si modificano direttamente e la modifica va subito su Notion. Ordinamento per colonna, filtro, nuove righe, archiviazione (doppio clic sul cestino) e collegamento alla pagina in Notion. Le altre colonne (posizione, relazioni, formule, rollup, persone, file) sono in sola lettura.
 
 Ogni database con una colonna data può comparire anche in **Agenda** con *Mostra in Agenda*: diventa un calendario sincronizzato in entrambe le direzioni, con i colori presi da una colonna Seleziona o Stato (es. la classe o il tipo di allenamento). Il token dell'integrazione già salvato si riusa, quindi basta scegliere il database.
+
+Le colonne si riconoscono dal nome: **Luogo** (anche di tipo *Luogo* di Notion), la **durata** (“Ore previste (min)”, “Durata”…) che diventa la fine dell'evento quando la data non ne ha una, e tutte le altre colonne (argomento, materia, docente, relazioni e rollup con i nomi delle pagine collegate) che compaiono nella scheda dell'evento sotto *Dal database*. *Cambia colonne* nella scheda dell'account permette di sceglierle a mano e di nascondere quelle che non servono.
 
 ## Meteo
 Icona in alto a destra con la temperatura attuale; un clic apre condizioni, umidità, vento, alba e tramonto, le prossime 24 ore e i 7 giorni. Nella Home c'è un riquadro con la situazione di oggi e nelle viste Giorno/Settimana ogni giorno mostra icona e massima. La località si cambia in *Impostazioni → Meteo* (predefinita: Cagliari). Dati di [Open-Meteo](https://open-meteo.com), gratuiti e senza account.
@@ -260,6 +271,7 @@ mobile.js      server per il telefono e abbinamento con QR
 phonesync.js   sincronizzazione con l'app Android (rete e cloud cifrato)
 agent.js       assistente proattivo: letture periodiche, piano IA, notifiche, azioni, domande dal telefono
 mail.js        lettura della posta (Gmail): inviti e, con l'IA, impegni e scadenze
+providers2.js  CalDAV (iCloud, Nextcloud…), Outlook / Microsoft 365, Cal.com, Todoist
 log.js         registro degli errori e diagnostica
 mobile-app/    app Android (Capacitor) con dati locali, notifiche e sincronizzazione
 updater.js     aggiornamenti dalle release di GitHub (AppImage e .deb)
