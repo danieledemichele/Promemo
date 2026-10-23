@@ -44,7 +44,8 @@ function createPhoneSync(ctx) {
       accounts: (d.accounts || []).map(a => ({ id: a.id, name: a.name, provider: a.provider, enabled: a.enabled, groups: (a.groups || []).map(g => ({ id: g.id, name: g.name, color: g.color, visible: g.visible !== false })) })),
       trips: Object.values(d.trips || {}).filter(t => !t.end || new Date(t.end) > new Date(now - 60 * 864e5)).map(t => ({ id: t.id, name: t.name, icon: t.icon, status: t.status, start: t.start, end: t.end, nights: t.nights, items: t.items.map(i => ({ id: i.id, title: i.title, start: i.start, type: i.type, place: i.place, cost: i.cost, booked: i.booked })), intro: t.ai ? t.ai.intro : '' })),
       travel: d.travel || {},
-      settings: { userName: d.settings.userName || '', accent: d.settings.accent || '', localColor: d.settings.localColor || '', hiddenLocal: d.settings.hiddenLocal || [], tripsColor: (d.settings.trips || {}).color || '', travel: !!(d.settings.travel && d.settings.travel.enabled) },
+      agent: d.agent ? { at: d.agent.at, summary: d.agent.summary, aiSummary: d.agent.aiSummary || '', tips: (d.agent.tips || []).filter(t => t.actions.every(x => ['quick', 'steps-auto', 'steps-tomorrow', 'steps-today'].includes(x.op))), feed: (d.agent.feed || []).slice(-40) } : null,
+      settings: { planner: d.settings.planner || null, userName: d.settings.userName || '', accent: d.settings.accent || '', localColor: d.settings.localColor || '', hiddenLocal: d.settings.hiddenLocal || [], tripsColor: (d.settings.trips || {}).color || '', travel: !!(d.settings.travel && d.settings.travel.enabled) },
     };
   }
   function state() { dev(); SM.track(ctx.data(), dev()); return SM.build(ctx.data(), dev(), ext()); }

@@ -12,14 +12,16 @@
   <header class="top"><img src="icon.png" alt=""><div class="grow"><b id="hello">Promemo</b><small id="sub"></small></div><button id="refresh" aria-label="Sincronizza">↻</button></header>
   <main id="main"></main>
   <form class="add" id="add"><input id="add-in" placeholder="Aggiungi: dentista martedì alle 9…" autocomplete="off" enterkeyhint="send"><button aria-label="Aggiungi">+</button></form>
-  <nav class="tabs"><button data-tab="oggi" class="on"><i>◉</i>Oggi</button><button data-tab="agenda"><i>▦</i>Agenda</button><button data-tab="compiti"><i>✓</i>Compiti</button><button data-tab="progetti"><i>▤</i>Progetti</button><button data-tab="altro"><i>⋯</i>Altro</button></nav>
+  <nav class="tabs"><button data-tab="assistente" class="on"><i>✦</i>Assistente</button><button data-tab="oggi"><i>◉</i>Oggi</button><button data-tab="agenda"><i>▦</i>Agenda</button><button data-tab="compiti"><i>✓</i>Compiti</button><button data-tab="progetti"><i>▤</i>Progetti</button><button data-tab="altro"><i>⋯</i>Altro</button></nav>
   <div class="sheet" id="sheet" hidden><div class="sheet-card"><div class="grab"></div><div id="sheet-body"></div></div></div>
   <div class="toast" id="toast"></div>
   <script src="scrypt.js"></script>
   <script src="nlp.js"></script>
   <script src="recur.js"></script>
   <script src="syncmodel.js"></script>
+  <script src="agentrules.js"></script>
   <script src="core.js"></script>
+  <script src="assistente.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

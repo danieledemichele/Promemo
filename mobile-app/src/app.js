@@ -15,7 +15,7 @@ const REM = [[null, 'Nessuno'], [0, "All'orario"], [5, '5 minuti prima'], [15, '
 const REP = [['', 'Mai'], ['daily', 'Ogni giorno'], ['weekdays', 'Nei giorni feriali'], ['weekly', 'Ogni settimana'], ['biweekly', 'Ogni 2 settimane'], ['monthly', 'Ogni mese'], ['yearly', 'Ogni anno']];
 const repKey = (r) => !r ? '' : r.freq === 'weekly' && r.byday && r.byday.length === 5 && !r.byday.includes(0) && !r.byday.includes(6) ? 'weekdays' : r.freq === 'weekly' && +r.interval === 2 ? 'biweekly' : r.freq;
 const repRule = (k, d) => !k ? null : k === 'weekdays' ? { freq: 'weekly', interval: 1, byday: [1, 2, 3, 4, 5] } : k === 'biweekly' ? { freq: 'weekly', interval: 2, byday: [d.getDay()] } : k === 'weekly' ? { freq: 'weekly', interval: 1, byday: [d.getDay()] } : { freq: k, interval: 1 };
-let tab = 'oggi', selDay = dk(new Date()), openProject = null;
+let tab = 'assistente', selDay = dk(new Date()), openProject = null;
 
 function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2400); }
 function steps() { return S.data.projects.filter(p => p.status !== 'archiviato').flatMap(p => p.steps.map(st => ({ p, st }))); }
@@ -50,7 +50,7 @@ function viewToday() {
 function viewAgenda() {
   const sel = parse(selDay), start = addD(day0(new Date()), -1);
   const strip = [...Array(21)].map((_, i) => { const d = addD(start, i), k = dk(d), n = itemsOn(d).length; return `<button class="dd ${k === selDay ? 'on' : ''} ${k === dk(new Date()) ? 'today' : ''}" data-day="${k}"><small>${d.toLocaleDateString('it-IT', { weekday: 'short' }).slice(0, 3)}</small><b>${d.getDate()}</b><i>${n ? '•'.repeat(Math.min(3, n)) : ''}</i></button>`; }).join('');
-  return `<div class="strip" id="strip">${strip}</div><h3>${cap(rel(sel))}</h3>${itemsOn(sel).map(row).join('') || '<div class="empty">Niente in questo giorno</div>'}`;
+  return `<div class="strip" id="strip">${strip}</div><div class="day-head"><h3>${cap(rel(sel))}</h3><button class="link" data-newev>+ Nuovo evento</button></div>${itemsOn(sel).map(row).join('') || '<div class="empty">Niente in questo giorno</div>'}`;
 }
 function viewTasks() {
   const all = steps().filter(x => !x.st.done), k = dk(new Date());
@@ -90,8 +90,9 @@ function render() {
   const name = (S.data.ext && S.data.ext.settings && S.data.ext.settings.userName) || '';
   $('#hello').textContent = name ? `Ciao, ${name}` : 'Promemo';
   const acc = S.data.ext && S.data.ext.settings && S.data.ext.settings.accent; if (acc) document.documentElement.style.setProperty('--accent', acc);
-  main.innerHTML = tab === 'oggi' ? viewToday() : tab === 'agenda' ? viewAgenda() : tab === 'compiti' ? viewTasks() : tab === 'progetti' ? viewProjects() : viewMore();
-  $('#add').hidden = tab === 'altro';
+  main.innerHTML = tab === 'assistente' ? viewAssistant() : tab === 'oggi' ? viewToday() : tab === 'agenda' ? viewAgenda() : tab === 'compiti' ? viewTasks() : tab === 'progetti' ? viewProjects() : viewMore();
+  $('#add').hidden = tab === 'altro' || tab === 'assistente';
+  document.body.classList.toggle('ag-mode', tab === 'assistente');
   if (tab === 'agenda') { const on = $('#strip .on'); on && on.scrollIntoView({ inline: 'center', block: 'nearest' }); }
   syncPill();
 }
@@ -233,7 +234,7 @@ $('#add-in').addEventListener('input', (e) => { const t = e.target.value.trim();
   if (PM.APP) {
     PM.APP.addListener('appUrlOpen', async (ev) => { if (/^promemo:/.test(ev.url)) { try { await PM.pairFromUrl(ev.url); render(); toast('Telefono abbinato'); } catch (err) { toast(err.message); } } });
     PM.APP.addListener('appStateChange', (st) => { if (st.isActive) PM.syncNow('ripresa').then(render); });
-    PM.APP.addListener('backButton', () => { if (!$('#sheet').hidden) closeSheet(); else if (openProject) { openProject = null; render(); } else if (tab !== 'oggi') { tab = 'oggi'; render(); } else PM.APP.exitApp(); });
+    PM.APP.addListener('backButton', () => { if (!$('#sheet').hidden) closeSheet(); else if (openProject) { openProject = null; render(); } else if (tab !== 'assistente') { tab = 'assistente'; render(); } else PM.APP.exitApp(); });
     try { const l = await PM.APP.getLaunchUrl(); if (l && l.url && /^promemo:/.test(l.url)) { await PM.pairFromUrl(l.url); toast('Telefono abbinato'); } } catch { /* */ }
     try { const info = await PM.APP.getInfo(); window.PM_VERSION = info.version; } catch { /* */ }
   }

@@ -10,6 +10,7 @@ const quick = require('./quick');
 const { createTravel } = require('./travel');
 const { createMobile } = require('./mobile');
 const { createPhoneSync } = require('./phonesync');
+const { createAgent } = require('./agent');
 const SyncModel = require('./src/syncmodel.js');
 const path = require('path');
 const fs = require('fs');
@@ -314,7 +315,7 @@ ipcMain.handle('data:set', (_e, d) => {
   // viaggi ed eventi dei viaggi li gestisce il processo principale
   d.trips = data.trips; d.events = d.events.filter(e => !e.tripRef).concat(data.events.filter(e => e.tripRef));
   // ciò che è stato aggiunto al volo (finestra rapida, telefono) dopo l'ultima lettura dell'interfaccia non va perso
-  d.travel = data.travel; d.geo = data.geo; d.briefDone = data.briefDone;
+  d.travel = data.travel; d.geo = data.geo; d.briefDone = data.briefDone; d.agent = data.agent;
   const base = d.rev || 0, inIds = new Set(d.events.map(e => e.id));
   for (const e of data.events) if (e.qrev > base && !inIds.has(e.id)) d.events.push(e);
   for (const p of data.projects) {
@@ -333,6 +334,7 @@ ipcMain.handle('data:set', (_e, d) => {
   checkReminders();
   sideWindows('data-changed', data);
   if (phoneSync.cfg().enabled) psSoon();
+  agentSoon(45000);
   clearTimeout(travelTimer); travelTimer = setTimeout(() => travel.refresh().catch(e => log.warn('viaggio', e.message)), 3000);
   if (spawned) setTimeout(() => { if (data) commit(); }, 80); // il compito successivo compare subito nell'interfaccia
   return { rev: data.rev, accounts: data.accounts, pendingDeletes: data.pendingDeletes, events: data.events };
@@ -709,6 +711,16 @@ ipcMain.handle('shortcut:set', (_e, sc) => { if (data) { data.settings.quickShor
 ipcMain.handle('shortcut:state', () => ({ exec: process.env.APPIMAGE || (app.isPackaged ? 'promemo' : 'npx electron .'), shortcut: (data && data.settings.quickShortcut) ?? 'CommandOrControl+Alt+Space', ok: shortcutOk, wayland: !!process.env.WAYLAND_DISPLAY }));
 ipcMain.handle('main:show', (_e, route) => { showWindow(); if (route && win) win.webContents.send('navigate', route); });
 
+// ---------- Assistente proattivo ----------
+const agent = createAgent({
+  data: () => data, commit, notify, log, quickAdd: (t) => quickAdd(t),
+  ai: async (system, messages, opts) => { const c = (data && data.settings.ai) || {}; if (!c.provider || c.provider === 'none') return null; return aiLib.chat(c, loadSecrets()['ai:' + c.provider], system, messages, opts); },
+});
+let agentTimer = null;
+const agentSoon = (ms = 60000, reason = 'modifiche') => { clearTimeout(agentTimer); agentTimer = setTimeout(() => agent.run(reason).catch(() => {}), ms); };
+ipcMain.handle('agent:run', wrap(() => agent.run('richiesta', { force: true })));
+ipcMain.handle('agent:act', wrap(({ op, args, id }) => agent.act(op, args, id)));
+
 // ---------- Promemo sul telefono ----------
 const phoneSync = createPhoneSync({ data: () => data, commit, backup, log, snapshot: (r) => { try { snapWrite(r); } catch { /* */ } }, secret: (k) => loadSecrets()[k] });
 let psTimer = null;
@@ -993,11 +1005,16 @@ function startServices() {
   setTimeout(() => travel.refresh().catch(e => log.warn('viaggio', e.message)), 5000);
   setInterval(() => travel.refresh().catch(e => log.warn('viaggio', e.message)), 10 * 60000);
   const tripAuto = () => { if (data && data.settings.trips && data.settings.trips.destDb) syncTrips().catch(e => console.warn('viaggi:', e.message)); };
-  setTimeout(() => { sync.syncAll(); tripAuto(); }, 3000);
+  setTimeout(() => { Promise.resolve(sync.syncAll()).then(() => agentSoon(4000, 'sincronizzazione')).catch(() => {}); tripAuto(); }, 3000);
   setTimeout(snapDaily, 20000); setInterval(snapDaily, 3600 * 1000);
   setTimeout(() => phoneSync.cloudRun('avvio').catch(() => {}), 12000);
+  // l'assistente gira da solo: poco dopo l'avvio (dopo le prime sincronizzazioni) e poi ogni tot ore
+  setTimeout(() => agent.run('avvio').catch(() => {}), Number(process.env.PROMEMO_AGENT_DELAY || 25000));
+  const agentLoop = () => setTimeout(() => { agent.run('periodico').catch(() => {}); agentLoop(); }, Math.max(0.5, +agent.cfg().every || 2) * 3600 * 1000);
+  agentLoop();
+  setInterval(() => { if (data && Date.now() - agent.lastRun() > 15 * 60000) agentSoon(1000, 'controllo'); }, 15 * 60000);
   // intervallo letto ogni volta: si può cambiare dalle impostazioni senza riavviare
-  const syncLoop = () => setTimeout(() => { if (data) { sync.syncAll(); tripAuto(); phoneSync.cloudRun('periodica').catch(() => {}); } syncLoop(); }, Math.max(5, (data && data.settings.syncMinutes) || 15) * 60000);
+  const syncLoop = () => setTimeout(() => { if (data) { Promise.resolve(sync.syncAll()).then(() => agentSoon(4000, 'sincronizzazione')).catch(() => {}); tripAuto(); phoneSync.cloudRun('periodica').catch(() => {}); } syncLoop(); }, Math.max(5, (data && data.settings.syncMinutes) || 15) * 60000);
   syncLoop();
   setTimeout(updAuto, Number(process.env.PROMEMO_UPDATE_DELAY || 15000));
   setInterval(updAuto, 6 * 3600 * 1000);

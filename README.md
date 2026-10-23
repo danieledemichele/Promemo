@@ -19,7 +19,17 @@ Stile ispirato a macOS, dati salvati sul tuo computer, sincronizzazione con Goog
 - **Database Notion**: sfoglia e modifica i database condivisi con l'integrazione.
 - **Account collegati**: Google Calendar, Notion, calendari da link.
 
-## Password all'avvio
+## Assistente proattivo
+![Assistente proattivo](docs/assistente-proattivo.png)
+
+Promemo si comporta come un assistente personale anche quando non gli chiedi niente. Ogni 2 ore (si cambia in *Impostazioni → Assistente proattivo*), dopo ogni sincronizzazione e poco dopo ogni modifica legge agenda, compiti, viaggi, tempi di viaggio e calendari collegati, e in cima alla Home ti dice:
+- **la tua giornata** in poche righe (se c'è un motore IA, la scrive l'IA con fino a 3 suggerimenti in più);
+- **cosa ha notato**: impegni che si sovrappongono, quando uscire e trasferimenti impossibili, compiti in ritardo, scadenze senza un momento per lavorarci, lo spazio libero più lungo e il compito giusto per riempirlo, giornate troppo piene, partenze presto domani, viaggi in arrivo, account che non si sincronizzano;
+- **le azioni con un clic**: sposta a oggi o a domani, trova io il tempo, fissa alle 15, avvia la concentrazione, promemoria per la valigia, apri l'evento. *Ignora* nasconde un suggerimento.
+
+Le cose importanti arrivano anche come notifica (al massimo 6 al giorno, mai nelle ore di silenzio). L'orologio in alto a destra della card apre lo storico di **cosa ho notato**.
+
+
 Promemo può chiedere una password a ogni apertura (*Impostazioni → Password all'avvio*, proposta anche al primo avvio).
 - I dati (`promemo.enc`) e le credenziali degli account (`credenziali.enc`) vengono cifrati con **AES-256-GCM**; la chiave è derivata dalla password con **scrypt**. Le copie non cifrate vengono eliminate.
 - All'attivazione viene mostrata una **chiave di recupero** (24 caratteri): sblocca i dati se dimentichi la password e chiede subito di sceglierne una nuova.
@@ -66,6 +76,10 @@ Ore in agenda per giorno e per calendario, concentrazione per attività, compiti
 - **Telefono**: Promemo serve un'app web nella rete di casa. In *Impostazioni → Telefono* si attiva e si inquadra il codice QR; poi *Aggiungi a schermata Home*. Agenda di oggi e della settimana, compiti da spuntare, progetti, viaggi e aggiunta con una frase. Fuori casa funziona attraverso una VPN (es. WireGuard). L'accesso richiede la chiave del QR; il collegamento è HTTP, quindi va usato solo in rete locale o in VPN.
 
 ## App Android e sincronizzazione
+<img src="docs/assistente-telefono.png" width="280" align="right" alt="Assistente sul telefono">
+
+La prima schermata dell'app è l'**Assistente**: il riepilogo della giornata, l'impegno in corso con l'avanzamento (o il prossimo), i suggerimenti con le loro azioni e, in basso, il tasto **Nuovo evento** con il modulo completo, più ✎ per scrivere una frase e 🎙 per dettarla con il microfono della tastiera. Le regole girano anche sul telefono, sui dati appena sincronizzati; il piano scritto dall'IA e lo storico arrivano dal computer. Le azioni fatte sul telefono tornano al computer con la sincronizzazione.
+
 | Oggi | Modifica |
 |---|---|
 | ![Android](docs/android-oggi.png) | ![Scheda](docs/android-scheda.png) |
@@ -234,6 +248,7 @@ quick.js       creazione da una frase (finestra rapida, widget, telefono)
 travel.js      tempo di viaggio (Nominatim, routing OSM)
 mobile.js      server per il telefono e abbinamento con QR
 phonesync.js   sincronizzazione con l'app Android (rete e cloud cifrato)
+agent.js       assistente proattivo: letture periodiche, piano IA, notifiche, azioni
 log.js         registro degli errori e diagnostica
 mobile-app/    app Android (Capacitor) con dati locali, notifiche e sincronizzazione
 updater.js     aggiornamenti dalle release di GitHub (AppImage e .deb)
@@ -244,6 +259,7 @@ preload.js     ponte sicuro verso l'interfaccia
 src/nlp.js     interpretazione delle frasi in italiano (condiviso)
 src/recur.js   ripetizioni (condiviso)
 src/syncmodel.js modello di sincronizzazione (condiviso con l'app Android)
+src/agentrules.js cosa nota l'assistente e cosa propone (condiviso con l'app Android)
 src/           interfaccia (HTML, CSS, JS senza framework; Leaflet in src/vendor per le mappe)
 ```
 

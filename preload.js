@@ -84,6 +84,8 @@ contextBridge.exposeInMainWorld('promemo', {
   shortcutSet: (s) => ipcRenderer.invoke('shortcut:set', s),
   shortcutState: () => ipcRenderer.invoke('shortcut:state'),
   showMain: (r) => ipcRenderer.invoke('main:show', r),
+  agentRun: () => ipcRenderer.invoke('agent:run'),
+  agentAct: (a) => ipcRenderer.invoke('agent:act', a),
   psyncStatus: () => ipcRenderer.invoke('psync:status'),
   psyncSet: (p) => ipcRenderer.invoke('psync:set', p),
   psyncNow: () => ipcRenderer.invoke('psync:now'),
