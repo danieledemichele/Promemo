@@ -186,6 +186,8 @@ Un clic su un compito o su un evento, nelle viste Giorno, Settimana o Mese, apre
 - **Sincronizza tra computer**: se un altro PC ha salvato una versione più recente nella stessa destinazione, compare un avviso con *Aggiorna*/*Ignora*.
 
 ## Assistente (IA)
+Motori disponibili: **modello installato sul computer** (Promemo trova da solo LM Studio, Ollama, Jan, llama.cpp, LocalAI, vLLM, GPT4All, KoboldCpp e text-generation-webui e ti fa scegliere il modello: gratis e senza inviare niente in rete), Ollama, Claude e servizi compatibili OpenAI. Le conversazioni restano salvate: l'icona dell'orologio nella finestra dell'assistente apre la cronologia per riaprirle, continuarle o eliminarle.
+
 Nella Home e con il pulsante **Assistente** (Ctrl+J) si apre una conversazione che organizza la giornata di oggi o di domani:
 1. l'assistente legge impegni del giorno, passi in ritardo e scadenze vicine;
 2. fa fino a 4 domande una alla volta (priorità, quando ti concentri meglio, vincoli, quanto riempire la giornata), con risposte rapide da cliccare;
@@ -258,7 +260,7 @@ sudo apt install ./dist/promemo_1.12.0_amd64.deb
 ```
 
 ## Scorciatoie
-Ctrl+Z annulla · Ctrl+Shift+Z ripeti · Ctrl+Alt+Spazio aggiunta rapida (da qualsiasi app) · Ctrl+K palette comandi e frasi · Ctrl+J assistente · Ctrl+B barra laterale · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni principali · Esc chiude popup e finestre.
+In Agenda: scorrimento a due dita sul touchpad (o ← →) per andare avanti e indietro, T per tornare a oggi · Ctrl+Z annulla · Ctrl+Shift+Z ripeti · Ctrl+Alt+Spazio aggiunta rapida (da qualsiasi app) · Ctrl+K palette comandi e frasi · Ctrl+J assistente · Ctrl+B barra laterale · Ctrl+N nuovo · Ctrl+F cerca · Ctrl+1…5 sezioni principali · Esc chiude popup e finestre.
 
 ## Dati
 `~/.config/Promemo/promemo.json` (scrittura atomica). Backup da *Impostazioni → Esporta*.

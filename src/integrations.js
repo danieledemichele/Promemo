@@ -41,7 +41,7 @@ paneHTML = function (id, ls) {
   }).join('');
   const notion = accs.some(a => a.provider === 'notion');
   const tc = s.trips || {}, nTrips = Object.keys(data.trips || {}).length;
-  const ai = { provider: 'none', ...(s.ai || {}) }, AIN = { none: 'Non attivo', anthropic: 'Claude (Anthropic)', ollama: 'Ollama', openai: 'Compatibile OpenAI' };
+  const ai = { provider: 'none', ...(s.ai || {}) }, AIN = { none: 'Non attivo', local: 'Modello sul computer', anthropic: 'Claude (Anthropic)', ollama: 'Ollama', openai: 'Compatibile OpenAI' };
   const bk = s.backup || {}, BKN = { folder: 'cartella', dropbox: 'Dropbox', webdav: 'WebDAV / Nextcloud', rclone: 'rclone' };
   const wxc = { enabled: true, name: 'Cagliari', ...(s.weather || {}) };
   const u = (typeof upd !== 'undefined' && upd) || {};

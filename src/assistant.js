@@ -1,12 +1,14 @@
 /* Promemo — assistente IA che organizza la giornata con una serie di domande */
 'use strict';
 
-const AI_PROV = { none: 'Nessuno', anthropic: 'Claude (Anthropic)', ollama: 'Ollama sul computer', openai: 'Compatibile OpenAI' };
+const AI_PROV = { none: 'Nessuno', local: 'Modello installato sul computer', ollama: 'Ollama sul computer', anthropic: 'Claude (Anthropic)', openai: 'Compatibile OpenAI (online)' };
 const AI_DEF = {
   anthropic: { model: 'claude-sonnet-5-5', models: [['claude-sonnet-5-5', 'Claude Sonnet 5.5 · consigliato'], ['claude-haiku-5-5', 'Claude Haiku 5.5 · più rapido ed economico'], ['claude-opus-5-5', 'Claude Opus 5.5 · più accurato']], baseUrl: '' },
   ollama: { model: 'llama3.1', models: [['llama3.1', 'Llama 3.1'], ['qwen2.5', 'Qwen 2.5'], ['mistral', 'Mistral'], ['gemma2', 'Gemma 2']], baseUrl: 'http://localhost:11434' },
   openai: { model: 'gpt-4o-mini', models: [], baseUrl: 'https://api.openai.com/v1' },
+  local: { model: '', models: [], baseUrl: 'http://localhost:1234/v1' },
 };
+let aiScan = null; // ultimi modelli trovati sul computer
 const aiCfg = () => ({ provider: 'none', ...(data.settings.ai || {}) });
 const aiReady = () => aiCfg().provider !== 'none';
 const aiModel = () => { const c = aiCfg(); return c.model || AI_DEF[c.provider]?.model || ''; };
@@ -15,7 +17,40 @@ const TIPI = {
   pausa: ['Pausa', '#40c057'], pasto: ['Pasto', '#f08a24'], spostamento: ['Spostamento', '#868e96'], personale: ['Personale', '#e0569b'],
 };
 
-let ai = { day: null, msgs: [], busy: false, error: '', addedFor: null };
+let ai = { id: null, day: null, msgs: [], busy: false, error: '', addedFor: null, hist: false };
+
+// ---------- cronologia delle conversazioni ----------
+const aiChats = () => (data.aiChats = data.aiChats || []);
+const aiNewId = () => 'chat-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function aiPersist() {
+  if (!ai.msgs.length) return;
+  ai.id = ai.id || aiNewId();
+  const plan = [...ai.msgs].reverse().find(m => m.view && m.view.piano);
+  const first = ai.msgs.find(m => m.role === 'user');
+  const title = (plan && plan.view.piano.titolo) || (first ? first.content : 'Conversazione');
+  const rec = { id: ai.id, day: ai.day, at: new Date().toISOString(), title: String(title).slice(0, 90), plan: !!plan, addedFor: ai.addedFor, msgs: ai.msgs.map(m => ({ role: m.role, content: String(m.content).slice(0, 20000) })) };
+  const list = aiChats().filter(c => c.id !== ai.id);
+  list.unshift(rec);
+  data.aiChats = list.slice(0, 80);
+  save();
+}
+function aiLoad(id) {
+  const c = aiChats().find(x => x.id === id); if (!c) return;
+  ai = { id: c.id, day: c.day || dayKey(new Date()), msgs: c.msgs.map(m => m.role === 'assistant' ? { ...m, view: parseAI(m.content) } : { ...m }), busy: false, error: '', addedFor: c.addedFor ?? null, hist: false };
+  drawAI();
+}
+function aiHistHTML() {
+  const list = aiChats();
+  if (!list.length) return `<div class="ai-empty">${icon('i-clock')}<b>Nessuna conversazione salvata</b><span>Le chat con l'assistente compaiono qui: puoi riaprirle, continuare a scrivere o riusare un piano.</span><div class="ai-start"><button class="btn-primary" data-ai="new">Nuova chat</button></div></div>`;
+  const groups = {};
+  for (const c of list) { const d = new Date(c.at), k = sameDay(d, new Date()) ? 'Oggi' : sameDay(d, addDays(new Date(), -1)) ? 'Ieri' : d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' }); (groups[k] = groups[k] || []).push(c); }
+  return `<div class="ai-hist">
+    <div class="ai-hist-top"><b>Conversazioni</b><button class="btn small" data-ai="new">${icon('i-plus')} Nuova chat</button></div>
+    ${Object.entries(groups).map(([k, cs]) => `<div class="ai-hist-day">${esc(k)}</div>${cs.map(c => `<div class="ai-hist-i ${c.id === ai.id ? 'on' : ''}" data-ai="load" data-id="${esc(c.id)}">
+      <div class="grow"><b>${esc(c.title)}</b><small>${c.day ? 'Giornata di ' + esc(fmtLong(parse(c.day)).toLowerCase()) + ' · ' : ''}${Math.ceil(c.msgs.length / 2)} ${Math.ceil(c.msgs.length / 2) === 1 ? 'scambio' : 'scambi'} · ${fmtHM(new Date(c.at))}${c.plan ? ' · <span class="ai-hist-tag">piano</span>' : ''}</small></div>
+      <button class="icon-btn" data-ai="hdel" data-id="${esc(c.id)}" title="Elimina">${icon('i-trash')}</button></div>`).join('')}`).join('')}
+  </div>`;
+}
 
 // ---------- contesto inviato al modello ----------
 function hm(d) { return fmtHM(d); }
@@ -112,13 +147,14 @@ async function aiSend(text) {
   ai.busy = false;
   if (!r.ok) { ai.error = r.error; ai.msgs.pop(); ai.retry = text; drawAI(); return; }
   ai.msgs.push({ role: 'assistant', content: r.text, view: parseAI(r.text) });
+  aiPersist();
   drawAI();
 }
 
 function aiStart(dayK, intent) {
   if (!aiReady()) { modalSettings('assistente'); return; }
   const day = parse(dayK);
-  ai = { day: dayK, msgs: [], busy: false, error: '', addedFor: null };
+  ai = { id: aiNewId(), day: dayK, msgs: [], busy: false, error: '', addedFor: null, hist: false };
   openAI();
   aiSend(intent || `Aiutami a organizzare ${sameDay(day, new Date()) ? 'il resto di oggi' : relDay(day).toLowerCase() === 'domani' ? 'la giornata di domani' : 'la giornata di ' + fmtLong(day)}.`);
 }
@@ -182,21 +218,22 @@ function drawAI() {
   d.innerHTML = `
     <div class="ai-head">
       <span class="ai-logo">${icon('i-spark')}</span>
-      <div class="grow"><b>Assistente</b><small>${esc(AI_PROV[c.provider] || '')}${aiModel() ? ' · ' + esc(aiModel()) : ''}</small></div>
+      <div class="grow"><b>Assistente</b><small>${c.provider === 'local' ? 'Sul computer' : esc(AI_PROV[c.provider] || '')}${aiModel() ? ' · ' + esc(aiModel()) : ''}</small></div>
       <div class="segmented ai-day">${[[dayKey(new Date()), 'Oggi'], [dayKey(addDays(new Date(), 1)), 'Domani']].map(([k, l]) => `<button class="${ai.day === k ? 'on' : ''}" data-ai="day" data-k="${k}">${l}</button>`).join('')}</div>
-      <button class="icon-btn" data-ai="reset" title="Ricomincia">${icon('i-refresh')}</button>
+      <button class="icon-btn ${ai.hist ? 'on' : ''}" data-ai="hist" title="Conversazioni precedenti">${icon('i-clock')}${aiChats().length ? `<span class="ai-hist-n">${Math.min(99, aiChats().length)}</span>` : ''}</button>
+      <button class="icon-btn" data-ai="reset" title="Nuova chat">${icon('i-plus')}</button>
       <button class="icon-btn" data-ai="close" title="Chiudi (Esc)">${icon('i-close')}</button>
     </div>
-    <div class="ai-body" id="ai-body">
+    <div class="ai-body" id="ai-body">${ai.hist ? aiHistHTML() : `
       ${remote ? `<div class="ai-privacy">${icon('i-lock')} Per creare il piano, gli impegni e i passi del giorno vengono inviati a ${c.provider === 'anthropic' ? 'Anthropic' : 'il servizio configurato'}.</div>` : ''}
       ${intro}${body}
       ${ai.busy ? '<div class="ai-msg bot typing"><i></i><i></i><i></i></div>' : ''}
-      ${ai.error ? `<div class="ai-err">${esc(ai.error)} <button class="link" data-ai="retry">Riprova</button> · <button class="link" data-ai="settings">Impostazioni</button></div>` : ''}
+      ${ai.error ? `<div class="ai-err">${esc(ai.error)} <button class="link" data-ai="retry">Riprova</button> · <button class="link" data-ai="settings">Impostazioni</button></div>` : ''}`}
     </div>
-    ${lastA && lastA.view.opzioni.length && !ai.busy ? `<div class="ai-opts">${lastA.view.opzioni.map(o => `<button class="ai-chip" data-ai="opt">${esc(o)}</button>`).join('')}</div>` : ''}
+    ${lastA && lastA.view.opzioni.length && !ai.busy && !ai.hist ? `<div class="ai-opts">${lastA.view.opzioni.map(o => `<button class="ai-chip" data-ai="opt">${esc(o)}</button>`).join('')}</div>` : ''}
     <form class="ai-input" id="ai-form"><input id="ai-in" placeholder="${ai.msgs.length ? 'Rispondi o chiedi una modifica…' : 'Scrivi cosa vuoi fare oggi…'}" autocomplete="off" ${ai.busy ? 'disabled' : ''}><button class="ai-send" ${ai.busy ? 'disabled' : ''} title="Invia">${icon('i-send')}</button></form>`;
-  const b = d.querySelector('#ai-body'); b.scrollTop = b.scrollHeight;
-  if (!ai.busy) d.querySelector('#ai-in').focus();
+  const b = d.querySelector('#ai-body'); if (!ai.hist) b.scrollTop = b.scrollHeight;
+  if (!ai.busy && !ai.hist) d.querySelector('#ai-in').focus();
 }
 
 function aiAddPlan(idx) {
@@ -214,7 +251,7 @@ function aiAddPlan(idx) {
     n++;
   }
   ai.addedFor = idx;
-  save(); render(); drawAI();
+  aiPersist(); render(); drawAI();
   toast(`${n} blocchi aggiunti all'agenda`);
 }
 
@@ -222,8 +259,11 @@ $('#ai-drawer').addEventListener('click', (e) => {
   const b = e.target.closest('[data-ai]'); if (!b) return;
   const a = b.dataset.ai;
   if (a === 'close') closeAI();
-  if (a === 'reset') { ai.msgs = []; ai.error = ''; ai.addedFor = null; drawAI(); }
-  if (a === 'day') { ai.day = b.dataset.k; ai.msgs = []; ai.error = ''; ai.addedFor = null; drawAI(); }
+  if (a === 'reset' || a === 'new') { ai = { id: aiNewId(), day: ai.day, msgs: [], busy: false, error: '', addedFor: null, hist: false }; drawAI(); }
+  if (a === 'day') { ai = { id: aiNewId(), day: b.dataset.k, msgs: [], busy: false, error: '', addedFor: null, hist: false }; drawAI(); }
+  if (a === 'hist') { ai.hist = !ai.hist; drawAI(); }
+  if (a === 'hdel') { e.stopPropagation(); data.aiChats = aiChats().filter(c => c.id !== b.dataset.id); if (ai.id === b.dataset.id) { ai.id = aiNewId(); ai.msgs = []; } save(); drawAI(); return; }
+  if (a === 'load') { aiLoad(b.dataset.id); return; }
   if (a === 'start') aiStart(ai.day);
   if (a === 'direct') aiStart(ai.day, 'Proponi subito un piano per la giornata, senza domande: usa buon senso.');
   if (a === 'opt') aiSend(b.textContent);
@@ -277,6 +317,9 @@ paneHTML = function (id, ls) {
     <p class="set-note" style="margin:-6px 0 14px">L'assistente della Home ti fa qualche domanda e prepara un piano a blocchi per la giornata, partendo dai tuoi impegni e dalle cose da fare.</p>
     <div class="set-group">
       ${srow('Motore', '', `<select class="set-select" id="ai-prov">${Object.entries(AI_PROV).map(([k, l]) => `<option value="${k}" ${c.provider === k ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
+      ${c.provider === 'local' ? srow('Modelli trovati', aiScan ? (aiScan.length ? `${aiScan.reduce((t, x) => t + x.models.length, 0)} modelli in ${aiScan.map(x => esc(x.name)).join(', ')}` : 'Nessun programma di modelli in ascolto: aprilo e avvia il server, poi riprova') : 'Cerco LM Studio, Ollama, Jan, llama.cpp, LocalAI, vLLM, GPT4All, KoboldCpp, text-generation-webui',
+        `${aiScan && aiScan.length ? `<select class="set-select" id="ai-local">${aiScan.map(x => `<optgroup label="${esc(x.name)}">${x.models.map(mo => `<option value="${esc(x.baseUrl)}|${esc(mo)}" ${c.baseUrl === x.baseUrl && c.model === mo ? 'selected' : ''}>${esc(mo)}</option>`).join('')}</optgroup>`).join('')}</select>` : ''}<button class="btn small" data-aiset="scan">${icon('i-search')} Cerca sul computer</button>`) : ''}
+      ${c.provider === 'local' ? srow('Indirizzo del server', 'Di solito non serve toccarlo: lo imposta la ricerca', `<input class="set-input" id="ai-base" value="${esc(c.baseUrl || d.baseUrl)}">`) : ''}
       ${c.provider !== 'none' ? srow('Modello', c.provider === 'ollama' ? 'Il nome del modello scaricato con <code>ollama pull</code>' : '', d.models && d.models.length && c.provider === 'anthropic'
         ? `<select class="set-select" id="ai-model">${d.models.map(([k, l]) => `<option value="${k}" ${model === k ? 'selected' : ''}>${l}</option>`).join('')}</select>`
         : `<input class="set-input" id="ai-model" value="${esc(model)}" list="ai-models"><datalist id="ai-models">${(d.models || []).map(([k]) => `<option value="${k}">`).join('')}</datalist>`) : ''}
@@ -286,6 +329,7 @@ paneHTML = function (id, ls) {
       ${c.provider !== 'none' ? srow('Prova', '<span id="ai-test-st">Verifica che il motore risponda</span>', '<button class="btn small" data-aiset="test">Prova connessione</button>') : ''}
     </div>
     ${c.provider === 'anthropic' ? '<p class="set-note">Con Claude il servizio è a consumo sul tuo account Anthropic: una pianificazione costa in genere qualche centesimo. Gli impegni e i passi del giorno pianificato vengono inviati ad Anthropic; la chiave resta cifrata su questo computer.</p>' : ''}
+    ${c.provider === 'local' ? '<p class="set-note">Il modello gira sul tuo computer: gratis, senza account e senza inviare niente in rete. Funziona con <b>LM Studio</b> (scheda Developer → Start server), <b>Jan</b> (Impostazioni → Local API Server), <b>Ollama</b>, <b>llama.cpp</b> (<code>llama-server -m modello.gguf</code>), <b>LocalAI</b>, <b>vLLM</b>, <b>GPT4All</b> (abilita il server API), <b>KoboldCpp</b> e <b>text-generation-webui</b> con l\'API attiva. Per piani affidabili scegli un modello da almeno 7–8 miliardi di parametri (Qwen 2.5 7B, Llama 3.1 8B, Mistral 7B); servono circa 8 GB di RAM. La prima risposta può essere lenta: il modello si carica in memoria.</p>' : ''}
     ${c.provider === 'ollama' ? '<p class="set-note">Ollama fa girare il modello sul tuo PC: gratis e senza inviare nulla in rete. Installalo da ollama.com, poi in un terminale: <code>ollama pull llama3.1</code>. Servono circa 8 GB di RAM; con modelli piccoli il piano è meno preciso.</p>' : ''}
     ${c.provider === 'openai' ? '<p class="set-note">Funziona con qualsiasi servizio che usa l\'interfaccia <code>/chat/completions</code> (OpenAI, LM Studio, Groq, OpenRouter…).</p>' : ''}`;
 };
@@ -298,6 +342,8 @@ drawPane = function (m) {
   const set = (patch, redraw) => { s.ai = { ...aiCfg(), ...patch }; save(); render(); if (redraw) drawPane(m); };
   box.querySelector('#ai-prov').addEventListener('change', (e) => { const p = e.target.value; set({ provider: p, model: AI_DEF[p]?.model || '', baseUrl: AI_DEF[p]?.baseUrl || '' }, true); });
   box.querySelector('#ai-model')?.addEventListener('change', (e) => set({ model: e.target.value.trim() }));
+  box.querySelector('#ai-local')?.addEventListener('change', (e) => { const [b, ...mo] = e.target.value.split('|'); set({ baseUrl: b, model: mo.join('|') }, true); });
+  if (aiCfg().provider === 'local' && !aiScan) setTimeout(() => box.querySelector('[data-aiset="scan"]')?.click(), 50);
   box.querySelector('#ai-base')?.addEventListener('change', (e) => set({ baseUrl: e.target.value.trim() }));
   box.querySelector('#ai-rem')?.addEventListener('change', (e) => set({ reminder: e.target.value === '' ? '' : +e.target.value }));
   const st = box.querySelector('#ai-key-st');
@@ -309,6 +355,13 @@ drawPane = function (m) {
       box.querySelector('#ai-key').value = '';
       st.textContent = k ? 'Salvata ✓' : 'Rimossa';
       toast(k ? 'Chiave salvata' : 'Chiave rimossa');
+    }
+    if (b.dataset.aiset === 'scan') {
+      b.disabled = true; b.innerHTML = '<span class="spinner"></span> Cerco…';
+      aiScan = await api.aiScan([aiCfg().baseUrl]);
+      const c = aiCfg(), all = aiScan.flatMap(x => x.models.map(mo => [x.baseUrl, mo]));
+      if (all.length && !all.some(([bu, mo]) => bu === c.baseUrl && mo === c.model)) set({ baseUrl: all[0][0], model: all[0][1] });
+      drawPane(m); return;
     }
     if (b.dataset.aiset === 'test') {
       const out = box.querySelector('#ai-test-st');

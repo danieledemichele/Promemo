@@ -923,6 +923,7 @@ ipcMain.handle('ai:chat', async (_e, { system, messages, maxTokens }) => {
   try { return { ok: true, text: await aiLib.chat(cfg, loadSecrets()['ai:' + cfg.provider], system, messages, { maxTokens }) }; }
   catch (e) { return { ok: false, error: e.message }; }
 });
+ipcMain.handle('ai:scan', (_e, extra) => aiLib.scanLocal(Array.isArray(extra) ? extra : []));
 ipcMain.handle('ai:key', (_e, { provider, key }) => {
   if (!data) return false;
   const s = loadSecrets();

@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('promemo', {
   lsImage: () => ipcRenderer.invoke('ls:image'),
   lsImageClear: () => ipcRenderer.invoke('ls:image-clear'),
   aiChat: (a) => ipcRenderer.invoke('ai:chat', a),
+  aiScan: (a) => ipcRenderer.invoke('ai:scan', a),
   aiKey: (a) => ipcRenderer.invoke('ai:key', a),
   aiHasKey: (p) => ipcRenderer.invoke('ai:has-key', p),
   bkNow: () => ipcRenderer.invoke('bk:now'),
