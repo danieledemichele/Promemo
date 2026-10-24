@@ -38,6 +38,13 @@ Le cose importanti arrivano anche come notifica (al massimo 6 al giorno, mai nel
 Gli slot fissi restano su Calendly, come prima: gli studenti scelgono l'orario da soli. Promemo legge i tuoi orari di disponibilità e ti avvisa quando un impegno che **Calendly non vede** (creato solo in Promemo, da Notion o da un calendario web) cade in uno slot, così puoi chiuderlo prima che qualcuno prenoti. Ogni prenotazione ha la **scheda dello studente**: lezioni fatte, prossima lezione, cosa ha scritto nella prenotazione, i tuoi appunti delle volte precedenti e un campo per gli appunti di questa lezione. Prima di una lezione l'assistente ti ricorda cosa avevate fatto l'ultima volta; dopo, ti chiede due righe su com'è andata. Se gli slot non si leggono, rigenera il token personale di Calendly con il permesso sulla disponibilità.
 
 
+## Verifica in due passaggi
+In *Impostazioni → Password*, con la password all'avvio attiva, *Verifica in due passaggi → Attiva*: inquadra il codice QR con un'app di autenticazione (Google Authenticator, Microsoft Authenticator, Aegis, 2FAS, Authy, Ente Auth, Proton Pass, Bitwarden, 1Password…) e scrivi il codice a 6 cifre. Da quel momento all'avvio, dopo la password, serve anche il codice dell'app. Ricevi 10 **codici di emergenza** (ognuno vale una volta) per quando non hai il telefono; la chiave di recupero resta la via d'emergenza e salta anche questo passaggio. La chiave segreta è cifrata con i tuoi dati: senza la password giusta non si può nemmeno controllare il codice.
+
+## Sicurezza
+Vedi [docs/SICUREZZA.md](docs/SICUREZZA.md): cosa protegge Promemo, come, e i test automatici (`npm test`) che lo verificano a ogni modifica.
+
+## Password all'avvio
 Promemo può chiedere una password a ogni apertura (*Impostazioni → Password all'avvio*, proposta anche al primo avvio).
 - I dati (`promemo.enc`) e le credenziali degli account (`credenziali.enc`) vengono cifrati con **AES-256-GCM**; la chiave è derivata dalla password con **scrypt**. Le copie non cifrate vengono eliminate.
 - All'attivazione viene mostrata una **chiave di recupero** (24 caratteri): sblocca i dati se dimentichi la password e chiede subito di sceglierne una nuova.
