@@ -30,6 +30,10 @@ function lanAddresses() {
 function createMobile(ctx) {
   // ctx: data(), commit(), quickAdd(text), root, onChange()
   let server = null, port = null, lastErr = '', seen = {};
+  // chiave sbagliata troppe volte dallo stesso indirizzo: fermo per 10 minuti (contro chi prova a indovinarla)
+  const fails = new Map();
+  const blocked = (ip) => { const f = fails.get(ip); return !!(f && f.until > Date.now()); };
+  const fail = (ip) => { const now = Date.now(), f = fails.get(ip) || { n: 0, first: now, until: 0 }; if (now - f.first > 10 * 60000) { f.n = 0; f.first = now; } f.n++; if (f.n >= 10) f.until = now + 10 * 60000; fails.set(ip, f); if (fails.size > 500) fails.clear(); };
   const cfg = () => ({ enabled: false, port: 8787, token: '', ...(ctx.data() && ctx.data().settings.mobile || {}) });
   const tokenOk = (req) => {
     const c = cfg(); if (!c.token) return false;
@@ -83,7 +87,10 @@ function createMobile(ctx) {
       try { return send(200, fs.readFileSync(path.join(ctx.root, f)), type); } catch { return send(404, 'non trovato', 'text/plain'); }
     }
     if (!u.pathname.startsWith('/api/')) return send(404, { error: 'non trovato' });
-    if (!tokenOk(req)) return send(401, { error: 'Abbina di nuovo il telefono dalle impostazioni di Promemo' });
+    const ip = req.socket.remoteAddress || '';
+    if (blocked(ip)) return send(429, { error: 'Troppi tentativi con una chiave sbagliata: riprova tra 10 minuti' });
+    if (!tokenOk(req)) { fail(ip); return send(401, { error: 'Abbina di nuovo il telefono dalle impostazioni di Promemo' }); }
+    fails.delete(ip);
     if (!ctx.data()) return send(423, { error: 'Promemo è bloccata sul computer' });
     seen[(req.headers['user-agent'] || '').slice(0, 80)] = new Date().toISOString();
     if (req.method === 'GET' && u.pathname === '/api/state') return send(200, state());
@@ -94,8 +101,10 @@ function createMobile(ctx) {
     if (req.method !== 'POST') return send(405, { error: 'metodo non ammesso' });
     let body = '';
     const limit = u.pathname === '/api/sync' ? 30 * 1024 * 1024 : 20000;
-    req.on('data', (c) => { body += c; if (body.length > limit) req.destroy(); });
+    let tooBig = false;
+    req.on('data', (c) => { if (tooBig) return; body += c; if (body.length > limit) { tooBig = true; send(413, { error: 'richiesta troppo grande' }); req.destroy(); } });
     req.on('end', () => {
+      if (tooBig) return;
       let j = {}; try { j = JSON.parse(body || '{}'); } catch { return send(400, { error: 'richiesta non valida' }); }
       try {
         if (u.pathname === '/api/sync') {

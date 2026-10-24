@@ -495,35 +495,43 @@ function createSync(ctx) {
       } catch (e) { acc.slots = { ...(acc.slots || {}), error: e.message }; }
       const known = new Map(ctx.data().events.filter(e => e.source && e.source.acc === acc.id && e.source.extra).map(e => [e.source.rid, e.source.extra]));
       const items = [];
+      let invErr = '';
       let url = '/scheduled_events?' + new URLSearchParams({ user: acc.user, min_start_time: from.toISOString(), max_start_time: to.toISOString(), status: 'active', count: '100', sort: 'start_time:asc' });
       let guard = 0;
       while (url && guard++ < 30) {
         const j = await cFetch(token, url);
         for (const ev of j.collection || []) {
           const rid = ev.uri.split('/').pop();
+          // chi ha prenotato: lo rileggo se manca (prima un errore lo lasciava vuoto per sempre)
           let inv = known.get(rid);
-          if (!inv) {
+          if (!inv || !inv.v2 || !(inv.list || []).length) {
             try {
               const ij = await cFetch(token, `/scheduled_events/${rid}/invitees?count=10&status=active`);
-              const list = (ij.collection || []).map(x => ({ name: x.name || '', email: x.email || '', qa: (x.questions_and_answers || []).map(q => `${q.question}: ${q.answer}`), cancel: x.cancel_url || '', reschedule: x.reschedule_url || '' }));
-              inv = { list };
-            } catch { inv = { list: [] }; }
+              const list = (ij.collection || []).map(x => ({ name: x.name || [x.first_name, x.last_name].filter(Boolean).join(' '), email: x.email || '', qa: (x.questions_and_answers || []).sort((a, b) => (a.position || 0) - (b.position || 0)).map(q => `${q.question}: ${q.answer}`), cancel: x.cancel_url || '', reschedule: x.reschedule_url || '' }));
+              inv = { list, v2: true };
+            } catch (e) { invErr = e.message; inv = { list: [] }; }
           }
           const first = inv.list[0];
           const who = inv.list.map(x => x.name).filter(Boolean).join(', ');
+          // la materia (o l'argomento) dalle risposte al modulo di prenotazione
+          const SUBJ = /materi|argoment|corso|esame|insegnament|disciplin|subject|topic|cosa vuoi|di cosa/i;
+          const qa = first ? first.qa.map(x => { const i = x.indexOf(': '); return [x.slice(0, i), x.slice(i + 2)]; }) : [];
+          const subj = ((qa.find(([q, a]) => SUBJ.test(q) && a && a.length < 80) || [])[1] || '').trim();
+          inv.subject = subj;
           const notes = [
             ...inv.list.map(x => `Con: ${x.name}${x.email ? ' <' + x.email + '>' : ''}${x.qa.length ? '\n' + x.qa.join('\n') : ''}`),
             first && first.reschedule ? `Sposta: ${first.reschedule}` : '',
             first && first.cancel ? `Annulla: ${first.cancel}` : '',
           ].filter(Boolean).join('\n');
           items.push({
-            rid, title: who ? `${ev.name} · ${who}` : ev.name,
+            rid, title: [ev.name, who, subj].filter(Boolean).join(' · '),
             start: localISO(new Date(ev.start_time)), end: localISO(new Date(ev.end_time)), allDay: false,
             location: cLocation(ev.location), notes, url: first?.reschedule || '', group: ev.name, extra: inv,
           });
         }
         url = j.pagination && j.pagination.next_page ? j.pagination.next_page : null;
       }
+      acc.warn = invErr ? (/403|permess|permission|scope|forbidden|unauthori/i.test(invErr) ? 'Non posso leggere chi ha prenotato: rigenera il token di Calendly con il permesso di lettura degli invitati (scheduled_events / invitees).' : `Partecipanti non letti: ${invErr}`) : '';
       return items;
     },
   };

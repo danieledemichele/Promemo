@@ -1,7 +1,7 @@
 /* Promemo — in Agenda si va avanti e indietro con lo scorrimento a due dita del touchpad (o la rotellina orizzontale).
    Nella vista Mese anche lo scorrimento verticale cambia mese, quando la pagina non ha niente da scorrere. */
 'use strict';
-let swAcc = 0, swReset = null, swLocked = false, swIdle = null;
+let swAcc = 0, swReset = null, swLocked = false, swIdle = null, swMin = 0, swLast = 0;
 const SW_STEP = 80;
 
 function swScrollable(el, dy) {
@@ -26,14 +26,17 @@ document.addEventListener('wheel', (e) => {
   if (!d) return;
   e.preventDefault();
   // dopo un cambio aspetto che il gesto (e la sua inerzia) finisca, così un solo gesto = un solo passo
-  if (swLocked) { clearTimeout(swIdle); swIdle = setTimeout(() => { swLocked = false; }, 160); return; }
+  // (almeno mezzo secondo, e finché arrivano eventi a meno di 220 ms l'uno dall'altro)
+  const now = performance.now();
+  if (swLocked) { if (now < swMin || now - swLast < 220) { swLast = now; return; } swLocked = false; }
+  swLast = now;
   swAcc += e.deltaMode === 1 ? d * 16 : d;
   clearTimeout(swReset); swReset = setTimeout(() => { swAcc = 0; }, 220);
   if (Math.abs(swAcc) < SW_STEP) return;
   const dir = swAcc > 0 ? 1 : -1;
   swAcc = 0; swLocked = true;
-  clearTimeout(swIdle); swIdle = setTimeout(() => { swLocked = false; }, 400);
   calShift(dir);
+  swMin = performance.now() + 500; swLast = performance.now();
   const g = document.querySelector('#view .agenda .tg-row, #view .agenda .agenda-main, #view .agenda .month');
   if (g) { g.classList.remove('swipe-next', 'swipe-prev'); void g.offsetWidth; g.classList.add(dir > 0 ? 'swipe-next' : 'swipe-prev'); }
 }, { passive: false });

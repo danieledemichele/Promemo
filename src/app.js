@@ -885,6 +885,7 @@ function viewAccounts() {
           <button class="icon-btn" data-action="acc-menu" data-id="${a.id}">${icon('i-more')}</button>
         </div>
         ${a.error ? `<div class="acc-err">${icon('i-close')} ${esc(a.error)}</div>` : ''}
+        ${a.warn && !a.error ? `<div class="acc-err" style="background:#fff3d6;color:#8a5300">${icon('i-bell')} ${esc(a.warn)}</div>` : ''}
         <div class="acc-cals">
           ${a.calendars.map(c => `
             <label class="acc-cal">
@@ -2205,6 +2206,7 @@ function showLock(st, preview = false) {
       card.classList.add('busy');
       const r = await api.unlock({ secret: inp.value, recovery: mode === 'rec' });
       card.classList.remove('busy');
+      if (r.needTotp && typeof showTotpStep === 'function') { showTotpStep(el, look, () => { mode = 'pw'; draw(); }); return; }
       if (!r.ok) {
         const msg = el.querySelector('#lock-msg');
         msg.textContent = r.error + (r.wait ? ` Attendi ${Math.ceil(r.wait / 1000)} s.` : '');

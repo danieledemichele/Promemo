@@ -37,6 +37,27 @@ ipcMain.on('log:write', (_e, { level, src, msg, stack }) => { const err = stack 
 
 const ICON = path.join(__dirname, 'build', 'icon.png');
 app.commandLine.appendSwitch('lang', 'it-IT');
+// su Wayland finestre come il widget e l'aggiunta rapida non possono scegliere la posizione né stare sopra:
+// resto su X11 (XWayland) come con le versioni precedenti, a meno che non si chieda Wayland
+if (process.platform === 'linux' && !process.env.PROMEMO_WAYLAND) app.commandLine.appendSwitch('ozone-platform', 'x11');
+
+// ---------- Sicurezza delle finestre ----------
+// ogni pagina dell'app può solo restare dentro i suoi file: niente altre pagine, niente finestre nuove, niente webview,
+// e nessun permesso (fotocamera, microfono, posizione…) a parte le notifiche
+const APP_PAGES = require('url').pathToFileURL(path.join(__dirname, 'src') + path.sep).href;
+const safeExternal = (url) => { try { const u = new URL(url); if (u.protocol === 'https:') shell.openExternal(u.href); } catch { /* indirizzo non valido */ } };
+app.on('web-contents-created', (_e, wc) => {
+  wc.setWindowOpenHandler(({ url }) => { safeExternal(url); return { action: 'deny' }; });
+  wc.on('will-navigate', (e, url) => { if (!url.startsWith(APP_PAGES)) { e.preventDefault(); safeExternal(url); } });
+  wc.on('will-redirect', (e, url) => { if (!url.startsWith(APP_PAGES)) e.preventDefault(); });
+  wc.on('will-attach-webview', (e) => e.preventDefault());
+});
+app.whenReady().then(() => {
+  const { session } = require('electron');
+  const allowed = new Set(['notifications', 'clipboard-sanitized-write']);
+  session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(allowed.has(perm)));
+  session.defaultSession.setPermissionCheckHandler((_wc, perm) => allowed.has(perm));
+});
 let win = null;
 let tray = null;
 let quitting = false;
@@ -136,7 +157,7 @@ function loadData() {
 }
 
 function saveData(d) {
-  fs.mkdirSync(dataDir(), { recursive: true });
+  fs.mkdirSync(dataDir(), { recursive: true, mode: 0o700 });
   // date di modifica e cancellazioni per la sincronizzazione con il telefono
   try { if (d && d.settings && typeof phoneSync !== 'undefined') SyncModel.track(d, phoneSync.dev()); } catch (e) { log.warn('sync-telefono', 'tracciamento: ' + e.message); }
   if (vault) {
@@ -144,9 +165,8 @@ function saveData(d) {
     writeAtomic(encFile(), vaultLib.seal(dataKey, JSON.stringify(d)));
     return;
   }
-  const tmp = dataFile() + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(d, null, 2));
-  fs.renameSync(tmp, dataFile());
+  // senza password i dati sono in chiaro: almeno leggibili solo dal tuo utente
+  writeAtomic(dataFile(), JSON.stringify(d, null, 2));
 }
 
 let data = null;
@@ -265,6 +285,7 @@ function setAutostart(on) {
 function showWindow() {
   if (!win) createWindow();
   win.show(); win.focus();
+  setTimeout(() => updAuto(), 3000);
 }
 
 function createWindow() {
@@ -285,9 +306,7 @@ function createWindow() {
   win.on('closed', () => { win = null; for (const w of [widgetWin, quickWin]) if (w && !w.isDestroyed()) w.destroy(); });
   win.on('maximize', () => win.webContents.send('maximized', true));
   win.on('unmaximize', () => win.webContents.send('maximized', false));
-  win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
-  // la finestra non lascia mai l'interfaccia: i link esterni si aprono nel browser
-  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) { e.preventDefault(); if (/^https:\/\//.test(url)) shell.openExternal(url); } });
+  // la finestra non lascia mai l'interfaccia: i link esterni si aprono nel browser (vedi web-contents-created)
 }
 
 function createTray() {
@@ -376,7 +395,7 @@ ipcMain.handle('acc:update', wrap(({ id, patch }) => {
   'dedupe' in patch ? sync.syncAll() : sync.syncAll(id);
   return a;
 }));
-ipcMain.on('open-url', (_e, url) => { if (/^https:\/\//.test(url)) shell.openExternal(url); });
+ipcMain.on('open-url', (_e, url) => safeExternal(String(url || '')));
 ipcMain.on('win:minimize', () => win && win.minimize());
 ipcMain.on('win:maximize', () => win && (win.isMaximized() ? win.unmaximize() : win.maximize()));
 ipcMain.on('win:close', () => win && win.close());
@@ -604,7 +623,7 @@ function spawnRepeats(d) {
 const snapDir = () => path.join(dataDir(), 'istantanee');
 function snapWrite(reason = 'giornaliera') {
   if (!data) return null;
-  fs.mkdirSync(snapDir(), { recursive: true });
+  fs.mkdirSync(snapDir(), { recursive: true, mode: 0o700 });
   const t = new Date(), name = `promemo-${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}_${pad(t.getHours())}-${pad(t.getMinutes())}-${reason}${vault ? '.enc' : '.json'}`;
   const body = JSON.stringify({ ...data, accounts: undefined, pendingDeletes: undefined });
   writeAtomic(path.join(snapDir(), name), vault ? vaultLib.seal(dataKey, body) : body);
@@ -742,8 +761,9 @@ const mobile = createMobile({ data: () => data, commit, quickAdd: (t, o) => quic
 ipcMain.handle('mobile:status', () => mobile.status());
 ipcMain.handle('mobile:set', (_e, patch) => {
   if (!data) return null;
-  const c = { enabled: false, port: 8787, token: '', ...(data.settings.mobile || {}), ...patch };
-  if (!c.token || patch.newToken) c.token = require('crypto').randomBytes(18).toString('base64url');
+  const { token: _ignored, ...safePatch } = patch || {}; // la chiave la genera solo Promemo
+  const c = { enabled: false, port: 8787, token: '', ...(data.settings.mobile || {}), ...safePatch };
+  if (!c.token || safePatch.newToken) c.token = require('crypto').randomBytes(18).toString('base64url');
   delete c.newToken;
   data.settings.mobile = c; commit();
   mobile.start(); if (!c.enabled) mobile.stop();
@@ -801,7 +821,15 @@ ipcMain.handle('upd:reveal', () => updater.reveal());
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('upd:check', () => updater.check());
 ipcMain.handle('upd:install', () => updater.install());
-const updAuto = () => { if (data && (data.settings.update || {}).auto !== false) updater.check(); };
+// controllo degli aggiornamenti: all'avvio (anche con Promemo ancora bloccata), allo sblocco, quando riapri la finestra
+// dall'area di notifica e ogni ora; mai più spesso di una volta ogni 20 minuti
+let lastUpdCheck = 0;
+const updAuto = (force) => {
+  if (data && (data.settings.update || {}).auto === false) return;
+  if (!force && lastUpdCheck && Date.now() - lastUpdCheck < 20 * 60000) return;
+  lastUpdCheck = Date.now();
+  updater.check().catch(() => {});
+};
 
 // ---------- Database Notion e viaggi ----------
 const ndb = createNotionDb({ data: () => data, secret: (id) => loadSecrets()[id] });
@@ -943,7 +971,77 @@ function removePlainCopies() {
   }
 }
 
-ipcMain.handle('lock:state', () => ({ lockscreen: lsFull(), configured: !!vault, locked: !!vault && !dataKey, hint: vault ? vault.hint || '' : '', wait: Math.max(0, nextTry - Date.now()), recovered: recoveredSession }));
+ipcMain.handle('lock:state', () => ({ lockscreen: lsFull(), configured: !!vault, locked: !!vault && !dataKey, hint: vault ? vault.hint || '' : '', wait: Math.max(0, nextTry - Date.now()), recovered: recoveredSession, twoFactor: !!(vault && vault.totp), backupLeft: vault && vault.totp ? (vault.totp.backup || []).length : 0 }));
+
+// ---------- Verifica in due passaggi ----------
+// la chiave segreta TOTP è cifrata con la chiave dei dati: si può controllare solo dopo la password giusta
+const totpLib = require('./totp');
+let pendingKey = null, pendingAt = 0, setup2fa = null;
+const bad2fa = () => { failures++; if (failures >= 3) nextTry = Date.now() + Math.min(60, 2 ** (failures - 3)) * 1000; };
+function finishUnlock(key, recovered) {
+  failures = 0; nextTry = 0;
+  dataKey = key; pendingKey = null;
+  recoveredSession = !!recovered;
+  try { data = loadData(); } catch (e) { dataKey = null; return { ok: false, error: 'Impossibile leggere i dati: ' + e.message }; }
+  secrets = null;
+  startServices();
+  setTimeout(() => updAuto(true), 5000);
+  return { ok: true, recovered: recoveredSession };
+}
+ipcMain.handle('lock:totp', async (_e, { code }) => {
+  if (!vault || !vault.totp) return { ok: false, error: 'Verifica in due passaggi non attiva.' };
+  if (!pendingKey || Date.now() - pendingAt > 5 * 60000) { pendingKey = null; return { ok: false, restart: true, error: 'Tempo scaduto: inserisci di nuovo la password.' }; }
+  const wait = nextTry - Date.now();
+  if (wait > 0) return { ok: false, wait, error: 'Troppi tentativi: riprova tra poco.' };
+  let secret;
+  try { secret = vaultLib.open(pendingKey, Buffer.from(vault.totp.enc, 'base64')).toString('utf8'); } catch { return { ok: false, error: 'Configurazione della verifica danneggiata: usa la chiave di recupero.' }; }
+  const st = totpLib.verify(secret, code, { notBefore: vault.totp.lastStep ?? -1 });
+  if (st >= 0) { vault.totp.lastStep = st; writeVault(vault); return finishUnlock(pendingKey, false); }
+  const h = totpLib.hashBackup(code), list = vault.totp.backup || [];
+  if (totpLib.normBackup(code).length === 8 && list.includes(h)) {
+    vault.totp.backup = list.filter(x => x !== h); writeVault(vault);
+    log.warn('sicurezza', `accesso con un codice di emergenza (ne restano ${vault.totp.backup.length})`);
+    const r = finishUnlock(pendingKey, false); return { ...r, backupUsed: true, backupLeft: vault.totp.backup.length };
+  }
+  bad2fa();
+  return { ok: false, wait: Math.max(0, nextTry - Date.now()), error: 'Codice non valido.' };
+});
+ipcMain.handle('2fa:begin', async () => {
+  if (!vault || !dataKey) return { ok: false, error: 'Attiva prima la password all’avvio.' };
+  const secret = totpLib.newSecret();
+  const account = (data && data.settings.userName) || require('os').userInfo().username || 'Promemo';
+  const uri = totpLib.uri(secret, account);
+  setup2fa = { secret, at: Date.now() };
+  const qr = await require('qrcode').toString(uri, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
+  return { ok: true, secret: secret.match(/.{1,4}/g).join(' '), uri, qr };
+});
+ipcMain.handle('2fa:confirm', async (_e, { code }) => {
+  if (!vault || !dataKey || !setup2fa || Date.now() - setup2fa.at > 15 * 60000) return { ok: false, error: 'Ricomincia la configurazione.' };
+  const st = totpLib.verify(setup2fa.secret, code);
+  if (st < 0) return { ok: false, error: 'Codice non valido: controlla che l’ora del telefono sia giusta e riprova.' };
+  const codes = totpLib.backupCodes(10);
+  vault.totp = { enc: vaultLib.seal(dataKey, setup2fa.secret).toString('base64'), backup: codes.map(totpLib.hashBackup), lastStep: st, at: new Date().toISOString() };
+  writeVault(vault); setup2fa = null;
+  log.info('sicurezza', 'verifica in due passaggi attivata');
+  return { ok: true, codes };
+});
+ipcMain.handle('2fa:disable', async (_e, { password }) => {
+  if (!vault || !dataKey || !vault.totp) return { ok: false, error: 'Non attiva.' };
+  const k = await vaultLib.unlock(vault, password || '');
+  if (!k) return { ok: false, error: 'Password non corretta.' };
+  delete vault.totp; writeVault(vault);
+  log.info('sicurezza', 'verifica in due passaggi disattivata');
+  return { ok: true };
+});
+ipcMain.handle('2fa:backup', async (_e, { code }) => {
+  if (!vault || !dataKey || !vault.totp) return { ok: false, error: 'Non attiva.' };
+  const secret = vaultLib.open(dataKey, Buffer.from(vault.totp.enc, 'base64')).toString('utf8');
+  const st = totpLib.verify(secret, code, { notBefore: vault.totp.lastStep ?? -1 });
+  if (st < 0) return { ok: false, error: 'Codice non valido.' };
+  const codes = totpLib.backupCodes(10);
+  vault.totp.backup = codes.map(totpLib.hashBackup); vault.totp.lastStep = st; writeVault(vault);
+  return { ok: true, codes };
+});
 
 ipcMain.handle('lock:unlock', async (_e, { secret, recovery }) => {
   if (!vault) return { ok: true };
@@ -956,13 +1054,10 @@ ipcMain.handle('lock:unlock', async (_e, { secret, recovery }) => {
     if (failures >= 3) nextTry = Date.now() + Math.min(60, 2 ** (failures - 3)) * 1000;
     return { ok: false, wait: Math.max(0, nextTry - Date.now()), error: recovery ? 'Chiave di recupero non valida.' : 'Password errata.' };
   }
-  failures = 0; nextTry = 0;
-  dataKey = key;
-  recoveredSession = !!recovery;
-  try { data = loadData(); } catch (e) { dataKey = null; return { ok: false, error: 'Impossibile leggere i dati: ' + e.message }; }
-  secrets = null;
-  startServices();
-  return { ok: true, recovered: recoveredSession };
+  // con la verifica in due passaggi la password non basta: serve anche il codice dell'app di autenticazione
+  // (la chiave di recupero resta la via d'emergenza e la salta)
+  if (vault.totp && !recovery) { pendingKey = key; pendingAt = Date.now(); return { ok: false, needTotp: true }; }
+  return finishUnlock(key, recovery);
 });
 
 ipcMain.handle('lock:setup', async (_e, { password, hint }) => {
@@ -1028,9 +1123,7 @@ function startServices() {
   // intervallo letto ogni volta: si può cambiare dalle impostazioni senza riavviare
   const syncLoop = () => setTimeout(() => { if (data) { Promise.resolve(sync.syncAll()).then(() => agentSoon(4000, 'sincronizzazione')).catch(() => {}); tripAuto(); phoneSync.cloudRun('periodica').catch(() => {}); } syncLoop(); }, Math.max(5, (data && data.settings.syncMinutes) || 15) * 60000);
   syncLoop();
-  setTimeout(updAuto, Number(process.env.PROMEMO_UPDATE_DELAY || 15000));
-  setInterval(updAuto, 6 * 3600 * 1000);
-  require('electron').powerMonitor.on('resume', () => setTimeout(() => { if (data) sync.syncAll(); remoteCheck(); updAuto(); }, 8000));
+  require('electron').powerMonitor.on('resume', () => setTimeout(() => { if (data) sync.syncAll(); remoteCheck(); updAuto(true); }, 8000));
   setTimeout(remoteCheck, 6000);
   setInterval(remoteCheck, 30 * 60000);
   setInterval(backupTick, 60 * 60000);
@@ -1045,6 +1138,12 @@ if (!app.requestSingleInstanceLock()) {
   app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { /* */ } });
   app.whenReady().then(() => {
     app.setAppUserModelId('it.danieledemichele.promemo');
+    // permessi: la cartella dei dati e i suoi file sono solo del tuo utente (anche quelli creati dalle versioni precedenti)
+    try {
+      const dir = dataDir(); fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.chmodSync(dir, 0o700);
+      const walk = (d, depth = 0) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, f.name); if (f.isDirectory()) { if (depth < 2 && !/^(Cache|Code Cache|GPUCache|blob_storage|Session Storage|Local Storage|IndexedDB|DawnGraphiteCache|DawnWebGPUCache|Shared Dictionary|Crashpad)$/.test(f.name)) { try { fs.chmodSync(p, 0o700); } catch { /* */ } walk(p, depth + 1); } } else if (/\.(json|enc|bin|vault|log|pmbak|pmsync)(\.\d+)?$|\.log\.\d+$/.test(f.name)) { try { fs.chmodSync(p, 0o600); } catch { /* */ } } } };
+      walk(dir);
+    } catch (e) { log.warn('sicurezza', 'permessi della cartella dei dati: ' + e.message); }
     vault = readVault();
     if (!vault) data = loadData();
     // con la protezione attiva la finestra si apre sempre (serve la password), anche con --hidden
@@ -1052,6 +1151,8 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     createTray();
     if (data) startServices();
+    setTimeout(() => updAuto(true), Number(process.env.PROMEMO_UPDATE_DELAY || 15000));
+    setInterval(() => updAuto(), 60 * 60000);
   });
   let finalBackupDone = false;
   app.on('before-quit', (e) => {

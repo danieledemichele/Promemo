@@ -1,7 +1,7 @@
 {
   "name": "promemo",
   "productName": "Promemo",
-  "version": "1.17.0",
+  "version": "1.18.0",
   "description": "Impegni, piani e promemoria in un unico posto, con Google Calendar, Notion, Calendly e calendari .ics. App desktop per Linux.",
   "main": "main.js",
   "author": "Daniele De Michele <daniele@danieledemichele.it>",
@@ -9,12 +9,13 @@
   "homepage": "https://danieledemichele.it",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --linux AppImage deb"
+    "dist": "electron-builder --linux AppImage deb",
+    "test": "node --test test/*.test.js"
   },
   "devDependencies": {
     "@fontsource/inter": "^5.3.0",
-    "electron": "^33.4.11",
-    "electron-builder": "^25.1.8",
+    "electron": "44.9.3",
+    "electron-builder": "26.17.0",
     "leaflet": "^1.9.4"
   },
   "build": {
@@ -37,6 +38,7 @@
       "agent.js",
       "mail.js",
       "providers2.js",
+      "totp.js",
       "log.js",
       "src/**/*",
       "build/icon.png"

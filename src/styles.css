@@ -1692,3 +1692,14 @@ tr:hover .nact .icon-btn { opacity: 1; }
 @keyframes swNext { from { opacity: .35; transform: translateX(36px); } to { opacity: 1; transform: none; } }
 @keyframes swPrev { from { opacity: .35; transform: translateX(-36px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .swipe-next, .swipe-prev { animation: none; } }
+
+/* ---------- Verifica in due passaggi ---------- */
+.tfa-setup { display: flex; gap: 18px; align-items: center; margin: 4px 0 12px; }
+.tfa-qr { width: 180px; height: 180px; flex: none; padding: 10px; background: #fff; border-radius: 14px; box-shadow: var(--shadow); }
+.tfa-qr svg { width: 100%; height: 100%; }
+.tfa-qr svg, .tfa-qr svg * { stroke-width: 1; stroke-linecap: butt; stroke-linejoin: miter; fill-opacity: 1; }
+.tfa-key { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tfa-key code { font-size: 13px; letter-spacing: .06em; padding: 8px 10px; border-radius: 8px; background: var(--fill-2); user-select: text; overflow-wrap: anywhere; }
+.tfa-code { font-size: 20px !important; letter-spacing: .3em; text-align: center; }
+.tfa-codes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 10px 0; }
+.tfa-codes code { text-align: center; font-size: 15px; letter-spacing: .08em; padding: 8px; border-radius: 8px; background: var(--fill-2); user-select: text; }

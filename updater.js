@@ -39,8 +39,8 @@ function createUpdater({ app, send, onLog = () => {} }) {
       const asset = (re) => (j.assets || []).find(a => re.test(a.name));
       const ai = asset(/\.AppImage$/i), deb = asset(/amd64\.deb$|\.deb$/i);
       state.available = { version, name: j.name || 'Promemo ' + version, notes: String(j.body || '').slice(0, 6000), url: j.html_url, date: j.published_at,
-        appimage: ai ? { url: ai.browser_download_url, size: ai.size, name: ai.name } : null,
-        deb: deb ? { url: deb.browser_download_url, size: deb.size, name: deb.name } : null };
+        appimage: ai ? { url: ai.browser_download_url, size: ai.size, name: ai.name, digest: ai.digest || '' } : null,
+        deb: deb ? { url: deb.browser_download_url, size: deb.size, name: deb.name, digest: deb.digest || '' } : null };
       onLog(`aggiornamento disponibile: ${version}`);
       return pub();
     } catch (e) {
@@ -56,9 +56,14 @@ function createUpdater({ app, send, onLog = () => {} }) {
     const total = Number(r.headers.get('content-length')) || asset.size || 0;
     let got = 0, last = 0;
     const body = Readable.fromWeb(r.body);
-    body.on('data', (c) => { got += c.length; const now = Date.now(); if (now - last > 200) { last = now; state.progress = total ? got / total : null; emit(); } });
+    const hash = require('crypto').createHash('sha256');
+    body.on('data', (c) => { got += c.length; hash.update(c); const now = Date.now(); if (now - last > 200) { last = now; state.progress = total ? got / total : null; emit(); } });
     await pipeline(body, fs.createWriteStream(dest, { mode: 0o755 }));
-    if (total && got < total) throw new Error('Download incompleto');
+    if (total && got < total) { try { fs.unlinkSync(dest); } catch { /* */ } throw new Error('Download incompleto'); }
+    // impronta SHA-256 pubblicata da GitHub per il file: se non coincide il file è corrotto o manomesso e non lo installo
+    const want = String(asset.digest || '').replace(/^sha256:/i, '').toLowerCase(), have = hash.digest('hex');
+    if (want && want !== have) { try { fs.unlinkSync(dest); } catch { /* */ } onLog(`impronta del pacchetto diversa: attesa ${want}, ottenuta ${have}`, true); throw new Error('Il file scaricato non corrisponde a quello pubblicato (impronta SHA-256 diversa): non lo installo. Riprova più tardi.'); }
+    state.verified = !!want;
     state.progress = 1; emit();
   }
 
@@ -84,11 +89,16 @@ function createUpdater({ app, send, onLog = () => {} }) {
         // il pacchetto scaricato resta lì: se l'installazione non va, si riprova senza riscaricarlo
         let file = state.file && state.file.version === u.version && fs.existsSync(state.file.path) && fs.statSync(state.file.path).size === (u.deb.size || fs.statSync(state.file.path).size) ? state.file.path : null;
         if (!file) {
-          const dir = path.join(os.tmpdir(), 'promemo-aggiornamenti'); fs.mkdirSync(dir, { recursive: true });
+          // cartella privata dell'utente (non /tmp, dove un altro utente potrebbe sostituire il file prima dell'installazione)
+          const dir = path.join(app.getPath('userData'), 'aggiornamenti'); fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.chmodSync(dir, 0o700);
+          for (const f of fs.readdirSync(dir)) if (f !== path.basename(u.deb.name)) fs.rmSync(path.join(dir, f), { force: true });
           file = path.join(dir, u.deb.name.replace(/[^\w.-]/g, '_'));
           await download(u.deb, file);
           state.file = { path: file, version: u.version };
         }
+        // ricontrollo l'impronta subito prima di installare (anche quando riuso un file già scaricato)
+        const want = String(u.deb.digest || '').replace(/^sha256:/i, '').toLowerCase();
+        if (want) { const have = require('crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex'); if (have !== want) { fs.rmSync(file, { force: true }); state.file = null; throw new Error('Il pacchetto non corrisponde a quello pubblicato: l’ho eliminato. Premi Riprova per scaricarlo di nuovo.'); } }
         state.progress = null; state.phase = 'install'; state.detail = ''; emit();
         // una sola richiesta di password: sistemo un'eventuale installazione rimasta a metà, poi installo
         const script = 'export DEBIAN_FRONTEND=noninteractive; dpkg --configure -a >/dev/null 2>&1; apt-get install -y --allow-downgrades "$1" 2>&1 || { dpkg -i "$1" 2>&1; apt-get install -f -y 2>&1; dpkg -s promemo 2>/dev/null | grep -q "install ok installed"; }';
@@ -118,7 +128,7 @@ function createUpdater({ app, send, onLog = () => {} }) {
   // dopo un errore: si torna allo stato normale (il pacchetto scaricato resta per riprovare)
   function reset() { if (!state.installing) { state.error = ''; state.detail = ''; state.progress = null; state.phase = null; emit(); } return pub(); }
   function reveal() { if (state.file && fs.existsSync(state.file.path)) require('electron').shell.showItemInFolder(state.file.path); return pub(); }
-  return { check, install, reset, reveal, state: pub };
+  return { check, install, reset, reveal, state: pub, _download: download };
 }
 
 module.exports = { createUpdater, newer };

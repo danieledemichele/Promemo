@@ -6,12 +6,12 @@ const os = require('os');
 
 const MAX = 1024 * 1024, KEEP = 3;
 let dir = null, file = null, buffer = [], counts = { error: 0, warn: 0 }, recent = [];
-const SECRET = /(ntn_[A-Za-z0-9]+|secret_[A-Za-z0-9]+|sk-[A-Za-z0-9-_]{8,}|Bearer\s+[A-Za-z0-9._-]+|access_token=[^&\s]+|refresh_token"?:\s*"[^"]+"|password"?:\s*"[^"]*")/g;
+const SECRET = /(ntn_[A-Za-z0-9]+|secret_[A-Za-z0-9]+|sk-[A-Za-z0-9-_]{8,}|cal_(?:live|test)_[A-Za-z0-9]+|gh[pousr]_[A-Za-z0-9]{20,}|sl\.[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._~+\/=-]+|Basic\s+[A-Za-z0-9+\/=]{8,}|(?:access|refresh)_token=[^&\s]+|secret=[A-Z2-7]{16,}|#k=[A-Za-z0-9_-]{8,}|\bk=[A-Za-z0-9_-]{16,}|"?(?:refresh_token|access_token|password|passwd|pass|token|apiKey|api_key|client_secret|key)"?\s*[:=]\s*"[^"]*")/gi;
 const clean = (s) => String(s).replace(SECRET, '[nascosto]');
 
 function init(d) {
   dir = path.join(d, 'logs'); file = path.join(dir, 'promemo.log');
-  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.chmodSync(dir, 0o700); } catch { /* */ }
   for (const l of buffer) write(l); buffer = [];
 }
 function rotate() {
@@ -38,7 +38,7 @@ function log(level, src, msg, err) {
   write(line);
 }
 const api = {
-  init,
+  init, clean,
   info: (src, msg) => log('info', src, msg),
   warn: (src, msg, err) => log('warn', src, msg, err),
   error: (src, msg, err) => log('error', src, msg, err),
